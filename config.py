@@ -11,7 +11,7 @@ def setup_config(server=None):
     elif args.server == "manneback" or hostname.endswith("cism.ucl.ac.be"):
         os.environ["DATA_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/data/cusl_wml"
         os.environ["MODELS_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/models/WMLIS"
-    elif args.server == "lucia" or hostname.endswith("cenaero.be"):
+    elif args.server == "lucia" or hostname.endswith("lucia.cenaero.be"):
         os.environ["DATA_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/data/cusl_wml"
         os.environ["MODELS_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/models/WMLIS"
     else:
