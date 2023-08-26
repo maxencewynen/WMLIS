@@ -23,7 +23,7 @@ from metrics import *
 from model import *
 import time
 from config import setup_config
-breakpoint()
+
 setup_config()
 
 parser = argparse.ArgumentParser(description='Get all command line arguments.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
