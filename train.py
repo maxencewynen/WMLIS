@@ -22,6 +22,9 @@ from os.path import join as pjoin
 from metrics import *
 from model import *
 import time
+from config import setup_config
+breakpoint()
+setup_config()
 
 parser = argparse.ArgumentParser(description='Get all command line arguments.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 # trainining
@@ -35,7 +38,7 @@ parser.add_argument('--path_model', type=str, default=None, help='Path to pretra
 # initialisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
 parser.add_argument('--seed', type=int, default=1, help='Specify the global random seed')
 # data
-parser.add_argument('--data_dir', type=str, default='/data/', help='Specify the path to the data files directory')
+parser.add_argument('--data_dir', type=str, default=os.environ["DATA_ROOT_DIR"], help='Specify the path to the data files directory')
 
 parser.add_argument('--I', nargs='+', default=['FLAIR'], choices=['FLAIR', 'phase_T2starw', 'mag_T2starw',\
                                                                   'MPRAGE_reg-T2starw_T1w', 'T1map', 'UNIT1'])
@@ -45,7 +48,7 @@ parser.add_argument('--apply_mask', type=str, default=None,
 parser.add_argument('--cp_factor', type=int, default=0, 
 			help="number of times each object has been copied for the copy paste data augmentation strategy")
 
-parser.add_argument('--save_path', type=str, default='/models/',
+parser.add_argument('--save_path', type=str, default=os.environ["MODELS_ROOT_DIR"],
                     help='Specify the path to the save directory')
 
 parser.add_argument('--num_workers', type=int, default=12, help='Number of workers')
