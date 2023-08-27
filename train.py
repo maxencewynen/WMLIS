@@ -60,9 +60,22 @@ parser.add_argument('--threshold', type=float, default=0.4, help='Probability th
 
 parser.add_argument('--wandb_project', type=str, default='WMLIS', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
+parser.add_argument('--force_restart', default=False, action='store_true', help="force the training to restart at 0 even if a checkpoint was found")
 
 VAL_AMP = True
 roi_size = (96, 96, 96)
+
+def load_checkpoint(model, optimizer, filename):
+    start_epoch = 0
+    print(f"=> Loading checkpoint '{filename}'")
+    checkpoint = torch.load(filename)
+    start_epoch = checkpoint['epoch']
+    model.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    wandb_run_id = checkpoint['wandb_run_id']
+    print(f"\nResuming training: (epoch {checkpoint['epoch']})\nLoaded checkpoint '{filename}'\n")
+
+    return model, optimizer, start_epoch, wandb_run_id
 
 def check_paths(args):
     from os.path import exists as pexists
@@ -120,9 +133,41 @@ def main(args):
     save_dir = f'{args.save_path}/{args.name}'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    wandb.login()
-    wandb.init(project=args.wandb_project, mode="online")
-    wandb.run.name = f'{args.name}'
+    
+    
+    checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
+    model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+    # Separate out the first layer parameters
+    first_layer_params = model.a_block1.conv1.parameters()
+        
+    # Separate out the rest of the parameters
+    rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
+        
+    # Initialize the optimizer with two parameter groups having different learning rates
+    optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
+                                 {'params': rest_of_model_params, 'lr': flr}],
+                                 weight_decay=0.0005) #momentum=0.9,
+
+    if os.path.exists(checkpoint_filename) and not args.force_restart:
+        model, optimizer, start_epoch, wandb_run_id = load_checkpoint(model, optimizer, checkpoint_filename)
+        model = model.to(device)
+        wandb.login()
+        wandb.init(project=args.wandb_project, mode="online", name=args.name, id=wandb_run_id, resume='must')
+    else:
+        ''' Initialise the model '''
+        if args.path_model is not None:
+            print(f"Retrieving pretrained model from {args.path_model}")
+            model = get_pretrained_model(args.path_model, len(args.I)).to(device)
+        else:
+            print(f"Initializing new model with {len(args.I)} input channels")
+            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+        start_epoch=0
+        wandb.login()
+        wandb.init(project=args.wandb_project, mode="online", name=args.name)
+        wandb_run_id = wandb.run.id
+    
+
     '''' Initialize dataloaders '''
     
     train_loader = get_train_dataloader(data_dir=args.data_dir, 
@@ -136,16 +181,8 @@ def main(args):
                                     I=args.I, 
                                     cache_rate=args.cache_rate,
                                     apply_mask=args.apply_mask)
-
-    ''' Initialise the model '''
-    if args.path_model is not None:
-        print(f"Retrieving pretrained model from {args.path_model}")
-        model = get_pretrained_model(args.path_model, len(args.I)).to(device)
-    else:
-        print(f"Initializing new model with {len(args.I)} input channels")
-        model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
-
-    #print(model)
+    
+    ''' Initialize losses '''
 
     loss_function_dice = DiceLoss(to_onehot_y=True,
                              softmax=True, sigmoid=False,
@@ -153,17 +190,6 @@ def main(args):
     loss_function_mse = nn.MSELoss()
     loss_function_l1 = nn.L1Loss()
 
-    # Separate out the first layer parameters
-    first_layer_params = model.a_block1.conv1.parameters()
-    
-    # Separate out the rest of the parameters
-    rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
-    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
-    
-    # Initialize the optimizer with two parameter groups having different learning rates
-    optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
-                                  {'params': rest_of_model_params, 'lr': flr}],
-                                 weight_decay=0.0005) #momentum=0.9,
     
     #optimizer = torch.optim.Adam(model.parameters(), args.learning_rate, weight_decay=0.0005)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)#, eta_min=1e-6)
@@ -193,7 +219,7 @@ def main(args):
     step_print = 1
     
     ''' Training loop '''
-    for epoch in range(epoch_num):
+    for epoch in range(start_epoch, epoch_num):
         start_epoch_time = time.time()
         print("-" * 10)
         print(f"epoch {epoch + 1}/{epoch_num}")
@@ -279,7 +305,12 @@ def main(args):
                 'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, }, 
             step=epoch)
         
-
+        torch.save({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'wandb_run_id': wandb_run_id
+        }, checkpoint_filename)
 
         ##### Validation #####
 
