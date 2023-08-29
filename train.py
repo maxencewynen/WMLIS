@@ -136,87 +136,82 @@ def main(args):
     
     
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
-    model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
-    # Separate out the first layer parameters
-    first_layer_params = model.a_block1.conv1.parameters()
-        
-    # Separate out the rest of the parameters
-    rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
-    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
-        
-    # Initialize the optimizer with two parameter groups having different learning rates
-    optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
-                                 {'params': rest_of_model_params, 'lr': flr}],
-                                 weight_decay=0.0005) #momentum=0.9,
-
+    # Initialize or load model
     if os.path.exists(checkpoint_filename) and not args.force_restart:
         model, optimizer, start_epoch, wandb_run_id = load_checkpoint(model, optimizer, checkpoint_filename)
-        model = model.to(device)
-        wandb.login()
-        wandb.init(project=args.wandb_project, mode="online", name=args.name, id=wandb_run_id, resume='must')
     else:
-        ''' Initialise the model '''
         if args.path_model is not None:
             print(f"Retrieving pretrained model from {args.path_model}")
-            model = get_pretrained_model(args.path_model, len(args.I)).to(device)
+            model = get_pretrained_model(args.path_model, len(args.I))
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
-            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
-        start_epoch=0
+            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
+    
+        start_epoch = 0
         wandb.login()
         wandb.init(project=args.wandb_project, mode="online", name=args.name)
         wandb_run_id = wandb.run.id
     
-
-    '''' Initialize dataloaders '''
+    # Move model to device
+    model = model.to(device)
     
+    # Separate out the first layer parameters
+    first_layer_params = model.a_block1.conv1.parameters()
+    
+    # Separate out the rest of the parameters
+    rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
+    
+    # Initialize or re-initialize optimizer
+    optimizer = torch.optim.Adam(
+        [{'params': first_layer_params, 'lr': args.learning_rate},
+         {'params': rest_of_model_params, 'lr': flr}],
+        weight_decay=0.0005
+    )
+    
+    # Initialize dataloaders
     train_loader = get_train_dataloader(data_dir=args.data_dir, 
-                         num_workers= args.num_workers, 
-                         I=args.I, 
-                         cache_rate=args.cache_rate,
-                         apply_mask=args.apply_mask,
-			 cp_factor=args.cp_factor)
+                                        num_workers=args.num_workers, 
+                                        I=args.I, 
+                                        cache_rate=args.cache_rate,
+                                        apply_mask=args.apply_mask,
+                                        cp_factor=args.cp_factor)
     val_loader = get_val_dataloader(data_dir=args.data_dir, 
-                                    num_workers= args.num_workers,
+                                    num_workers=args.num_workers,
                                     I=args.I, 
                                     cache_rate=args.cache_rate,
                                     apply_mask=args.apply_mask)
     
-    ''' Initialize losses '''
-
+    # Initialize losses
     loss_function_dice = DiceLoss(to_onehot_y=True,
-                             softmax=True, sigmoid=False,
-                             include_background=False)
+                                  softmax=True, sigmoid=False,
+                                  include_background=False)
     loss_function_mse = nn.MSELoss()
     loss_function_l1 = nn.L1Loss()
-
     
-    #optimizer = torch.optim.Adam(model.parameters(), args.learning_rate, weight_decay=0.0005)
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)#, eta_min=1e-6)
-
+    # Initialize scheduler
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
+    
+    # Initialize other variables and metrics
     act = nn.Softmax(dim=1)
-
     epoch_num = args.n_epochs
     val_interval = args.val_interval
     threshold = args.threshold
-    
     gamma_focal = 2.0
     dice_weight = 0.5
     focal_weight = 1.0
-    
     seg_loss_weight = args.seg_loss_weight
     heatmap_loss_weight = args.heatmap_loss_weight
     offsets_loss_weight = args.offsets_loss_weight
-
-
     dice_metric = DiceMetric(include_background=False, reduction="mean")
     best_metric_nDSC, best_metric_epoch_nDSC = -1, -1
     best_metric_DSC, best_metric_epoch_DSC = -1, -1
-
     epoch_loss_values, metric_values_nDSC, metric_values_DSC = [], [], []
-
+    
+    # Initialize scaler
     scaler = torch.cuda.amp.GradScaler()
     step_print = 1
+
     
     ''' Training loop '''
     for epoch in range(start_epoch, epoch_num):
