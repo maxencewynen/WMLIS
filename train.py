@@ -134,10 +134,24 @@ def main(args):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)    
     
+    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
+
+    # Initialize model
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
-    # Initialize or load model
     if os.path.exists(checkpoint_filename) and not args.force_restart:
-        model, optimizer, start_epoch, wandb_run_id = load_checkpoint(model, optimizer, checkpoint_filename)
+        model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+        checkpoint = torch.load(checkpoint_filename)
+        start_epoch = checkpoint['epoch']
+        model.load_state_dict(checkpoint['state_dict'])
+        first_layer_params = model.a_block1.conv1.parameters()
+        rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+        optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
+             {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        wandb_run_id = checkpoint['wandb_run_id']
+        wandb.init(project=args.wandb_project, mode="online", name=args.name, resume="must", id=wandb_run_id)
+        print(f"\nResuming training: (epoch {checkpoint['epoch']})\nLoaded checkpoint '{checkpoint_filename}'\n")
+        
     else:
         if args.path_model is not None:
             print(f"Retrieving pretrained model from {args.path_model}")
@@ -145,29 +159,17 @@ def main(args):
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
-    
+        model.to(device)
+        first_layer_params = model.a_block1.conv1.parameters()
+        rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+        optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
+             {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+        
         start_epoch = 0
         wandb.login()
         wandb.init(project=args.wandb_project, mode="online", name=args.name)
         wandb_run_id = wandb.run.id
-    
-    # Move model to device
-    model = model.to(device)
-    
-    # Separate out the first layer parameters
-    first_layer_params = model.a_block1.conv1.parameters()
-    
-    # Separate out the rest of the parameters
-    rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
-    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
-    
-    # Initialize or re-initialize optimizer
-    optimizer = torch.optim.Adam(
-        [{'params': first_layer_params, 'lr': args.learning_rate},
-         {'params': rest_of_model_params, 'lr': flr}],
-        weight_decay=0.0005
-    )
-    
+
     # Initialize dataloaders
     train_loader = get_train_dataloader(data_dir=args.data_dir, 
                                         num_workers=args.num_workers, 
