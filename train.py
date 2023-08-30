@@ -140,16 +140,26 @@ def main(args):
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
     if os.path.exists(checkpoint_filename) and not args.force_restart:
         model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+        
         checkpoint = torch.load(checkpoint_filename)
+        
         start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
+        
         first_layer_params = model.a_block1.conv1.parameters()
         rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+        
         optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
-             {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+            {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
         optimizer.load_state_dict(checkpoint['optimizer'])
+        
         wandb_run_id = checkpoint['wandb_run_id']
         wandb.init(project=args.wandb_project, mode="online", name=args.name, resume="must", id=wandb_run_id)
+        
+        # Initialize scheduler
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
+        lr_scheduler.load_state_dict(checkpoint["scheduler"])
+
         print(f"\nResuming training: (epoch {checkpoint['epoch']})\nLoaded checkpoint '{checkpoint_filename}'\n")
         
     else:
@@ -159,6 +169,7 @@ def main(args):
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
+        
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
         rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
@@ -169,6 +180,9 @@ def main(args):
         wandb.login()
         wandb.init(project=args.wandb_project, mode="online", name=args.name)
         wandb_run_id = wandb.run.id
+        
+        # Initialize scheduler
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
 
     # Initialize dataloaders
     train_loader = get_train_dataloader(data_dir=args.data_dir, 
@@ -190,8 +204,6 @@ def main(args):
     loss_function_mse = nn.MSELoss()
     loss_function_l1 = nn.L1Loss()
     
-    # Initialize scheduler
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
     
     # Initialize other variables and metrics
     act = nn.Softmax(dim=1)
@@ -305,7 +317,8 @@ def main(args):
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'wandb_run_id': wandb_run_id
+            'wandb_run_id': wandb_run_id,
+            'scheduler': lr_scheduler.state_dict()
         }, checkpoint_filename)
 
         ##### Validation #####
