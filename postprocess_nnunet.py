@@ -8,13 +8,14 @@ parser.add_argument("--dir", type=str, required=True,  help="Directory containin
 args = parser.parse_args()
 
 
-for filename in os.listdir(args.dir):
+for filename in sorted(os.listdir(args.dir)):
     if not filename.endswith(".npz"):
         continue
+    print(filename[:7])
     file = os.path.join(args.dir, filename)
     source_file = file.replace(".npz", ".nii.gz")
 
-    npz = np.load(filename)
+    npz = np.load(file)
     
     proba = npz['softmax'][1]
 
@@ -24,8 +25,8 @@ for filename in os.listdir(args.dir):
     affine = img.affine
     proba = np.swapaxes(proba, 2, 0)
     assert proba.shape == img_data.shape
-    out_file = file.replace("reg-T2starw_FLAIR.nii.gz", "pred_prob.nii.gz"))
-    nib.save(nib.Nifti1Image(proba.astype(np.float32), affine), )
+    out_file = file.replace("reg-T2starw_FLAIR.npz", "pred_prob.nii.gz")
+    nib.save(nib.Nifti1Image(proba.astype(np.float32), affine), out_file)
     
     shutil.move(source_file, source_file.replace("reg-T2starw_FLAIR.nii.gz", "seg_binary.nii.gz"))
 
