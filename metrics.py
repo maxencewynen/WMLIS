@@ -274,7 +274,7 @@ def compute_metrics(args):
     if not os.path.exists(args.pred_path) or not os.path.exists(args.ref_path):
         print("Either prediction or reference path doesn't exist!")
         return
-
+    
     metrics_dict = {"Subject_ID": [], "File": []}
     if args.pq or args.all: metrics_dict["PQ"] = []
     if args.fbeta or args.all: metrics_dict["Fbeta"] = []
@@ -328,9 +328,9 @@ def compute_metrics(args):
             if args.ref_count or args.all:
                 metrics_dict["Ref_Lesion_Count"].append(ref_lesion_count(ref_img))
             if args.dic or args.all:
-                metrics_dict["DiC"].append(DiC(pred_img, ref_img))			
-    
-    model_name = os.path.basename(args.pred_path)
+                metrics_dict["DiC"].append(DiC(pred_img, ref_img))
+
+    model_name = os.path.basename(os.path.dirname(args.pred_path))
     # Convert dictionary to dataframe and save as CSV
     df = pd.DataFrame(metrics_dict)
     df.to_csv(os.path.join(args.pred_path, f"metrics_{model_name}_{dd}.csv"), index=False)
