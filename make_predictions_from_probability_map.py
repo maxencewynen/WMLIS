@@ -7,10 +7,10 @@ from postprocess import *
 
 def process_files(directory, threshold):
     # List all files in the directory
-    files = [f for f in os.listdir(directory) if f.endswith('_pred_prob.nii.gz')]
+    files = [f for f in os.listdir(directory) if f.endswith('_pred-prob.nii.gz')]
     
     # Loop through each file and process it
-    for f in files:
+    for f in sorted(files):
         print(f)
         full_path = os.path.join(directory, f)
         
@@ -26,7 +26,7 @@ def process_files(directory, threshold):
 
         # Save the binary segmentation
         new_img = nib.Nifti1Image(binary_data, img.affine)
-        new_name = f.replace('_pred_prob.nii.gz', '_seg_binary.nii.gz')
+        new_name = f.replace('_pred-prob.nii.gz', '_seg-binary.nii.gz')
         new_full_path = os.path.join(directory, new_name)
         nib.save(new_img, new_full_path)
         
@@ -35,7 +35,7 @@ def process_files(directory, threshold):
         
         # Save the instances
         new_img = nib.Nifti1Image(labeled_array.astype(np.int32), img.affine)
-        new_name = f.replace('_pred_prob.nii.gz', '_pred_instances.nii.gz')
+        new_name = f.replace('_pred-prob.nii.gz', '_pred-instances.nii.gz')
         new_full_path = os.path.join(directory, new_name)
         nib.save(new_img, new_full_path)
 

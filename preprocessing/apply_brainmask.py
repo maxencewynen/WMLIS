@@ -3,6 +3,7 @@ import nibabel as nib
 import os
 import numpy as np
 from os.path import join as pjoin
+from pathlib import Path
 
 def find_bounding_box(mask_data):
     """
@@ -23,6 +24,11 @@ def apply_mask(images_dir, masks_dir, output_dir, output_mask_dir, overwrite=Fal
     overwrite: whether to overwrite the image file or not
     list_of_directories: list of all the directories in which there are files we want to apply the brainmask to. Default to None.
     """
+    images_dir = Path(images_dir)
+    masks_dir = Path(masks_dir)
+    output_dir = Path(output_mask_dir)
+    list_of_directories = [Path(d) for d in list_of_directories]
+
     # Get a list of all mask files in masks_dir
     mask_files = sorted([f for f in os.listdir(masks_dir) if f.endswith('_brainmask.nii.gz')])
 
@@ -36,7 +42,7 @@ def apply_mask(images_dir, masks_dir, output_dir, output_mask_dir, overwrite=Fal
         for subject_id, file_pairs in subject_files.items():
             for image_path, mask_path in file_pairs:
                 output_filename = pjoin(output_dir, os.path.basename(image_path))
-
+                
                 # Check if the image file exists
                 if not os.path.isfile(image_path):
                     print(f"Image file not found for {subject_id}. Skipping...")
@@ -123,11 +129,11 @@ def apply_mask(images_dir, masks_dir, output_dir, output_mask_dir, overwrite=Fal
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Apply binary masks to images from the same subject.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--images_dir", type=str, help="Directory containing the image files.")
-    parser.add_argument("--masks_dir", type=str, help="Directory containing the mask files.")
+    parser.add_argument("--brainmasks_dir", type=str, help="Directory containing the mask files.")
     parser.add_argument("--output_dir", type=str, help="Output directory where masked images will be saved.")
-    parser.add_argument("--output_mask_dir", type=str, default=None, help="Output directory where cropped brain masks will be saved.")
+    parser.add_argument("--output_brainmask_dir", type=str, default=None, help="Output directory where cropped brain masks will be saved.")
     parser.add_argument("--overwrite", action="store_true", default=False, help="Whether to overwrite files that already exist or not.")
     parser.add_argument("--list_of_directories", nargs='*', type=str, default=None, help="List of (ABSOLUTE PATHS to) directories containing the files to apply the brain mask to.")
     args = parser.parse_args()
 
-    apply_mask(args.images_dir, args.masks_dir, args.output_dir, args.output_mask_dir, args.overwrite, args.list_of_directories)
+    apply_mask(args.images_dir, args.brainmasks_dir, args.output_dir, args.output_brainmask_dir, args.overwrite, args.list_of_directories)
