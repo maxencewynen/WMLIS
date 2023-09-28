@@ -104,6 +104,8 @@ def apply_mask(images_dir, masks_dir, output_dir, output_mask_dir, overwrite=Fal
     # Process the files from each directory in list_of_directories
     if list_of_directories:
         for directory in list_of_directories:
+            if directory.endswith('/') or directory.endswith('\\'):
+                directory = directory[:-1]
             print(directory)
             parent_dir = os.path.dirname(directory)
             print(parent_dir)
