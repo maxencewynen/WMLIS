@@ -17,7 +17,7 @@ parser.add_argument('--other_directories', type=str, nargs="+", required=False, 
 parser.add_argument('--ignore_images', action='store_true', default=False, help="Whether to ignore the images folder")
 parser.add_argument('--ignore_labels', action='store_true', default=False, help="Whether to ignore the labels folder")
 parser.add_argument('--ignore_brainmasks', action='store_true', default=False, help="Whether to ignore the brainmasks folder")
-parser.add_argument('--seed', type=int, default=42, help="Random seed")
+parser.add_argument('--seed', type=int, default=0, help="Random seed")
 
 args = parser.parse_args()
 
@@ -44,8 +44,8 @@ print(f"List of subjects: \n{subj}")
 random.seed(args.seed)
 
 # Split the subjects into train, val, and test sets
-train_subjects, remaining_subjects = train_test_split(subj, test_size=0.4, random_state=3)
-val_subjects, test_subjects = train_test_split(remaining_subjects, test_size=0.5, random_state=3)
+train_subjects, remaining_subjects = train_test_split(subj, test_size=0.4, random_state=args.seed)
+val_subjects, test_subjects = train_test_split(remaining_subjects, test_size=0.5, random_state=args.seed)
 
 print("*"*20)
 print(f"Training subjects ({len(train_subjects)}): {train_subjects}")
