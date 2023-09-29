@@ -12,8 +12,8 @@ def setup_config(server=None):
         os.environ["DATA_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/data/cusl_wml"
         os.environ["MODELS_ROOT_DIR"] = r"/CECI/home/ucl/elen/mwynen/models/WMLIS"
     elif server == "lucia" or hostname.endswith("lucia.cenaero.be"):
-        os.environ["DATA_ROOT_DIR"] = r"/gpfs/home/acad/ariacpg/mwynen/data/cusl_wml"
-        os.environ["MODELS_ROOT_DIR"] = r"/gpfs/home/acad/ariacpg/mwynen/models/WMLIS"
+        os.environ["DATA_ROOT_DIR"] = r"/gpfs/home/acad/ucl-elen/mwynen/data/cusl_wml"
+        os.environ["MODELS_ROOT_DIR"] = r"/gpfs/home/acad/ucl-elen/mwynen/models/WMLIS"
     else:
         raise Exception(f"Server {server} not in known servers. Modify the current file to add it.")
 
