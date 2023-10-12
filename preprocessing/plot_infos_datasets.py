@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Given datasets
-training =  ['sub-129_', 'sub-029_', 'sub-248_', 'sub-210_', 'sub-156_', 'sub-217_', 'sub-243_', 'sub-022_', 'sub-206_', 'sub-003_', 'sub-169_', 'sub-005_', 'sub-107_', 'sub-188_', 'sub-057_', 'sub-125_', 'sub-051_', 'sub-186_', 'sub-131_', 'sub-198_', 'sub-104_', 'sub-150_', 'sub-184_', 'sub-229_', 'sub-220_', 'sub-189_', 'sub-197_', 'sub-035_', 'sub-102_', 'sub-106_', 'sub-001_', 'sub-031_', 'sub-234_', 'sub-008_', 'sub-240_', 'sub-115_', 'sub-192_']
-validation = ['sub-024_', 'sub-130_', 'sub-110_', 'sub-205_', 'sub-152_', 'sub-144_', 'sub-036_', 'sub-252_', 'sub-209_', 'sub-038_', 'sub-046_', 'sub-123_']
-test = ['sub-132_', 'sub-230_', 'sub-199_', 'sub-218_', 'sub-032_', 'sub-224_', 'sub-017_', 'sub-242_', 'sub-060_', 'sub-054_', 'sub-168_', 'sub-181_', 'sub-056_']
+training = ['sub-234_', 'sub-057_', 'sub-242_', 'sub-132_', 'sub-054_', 'sub-131_', 'sub-022_', 'sub-055_', 'sub-102_', 'sub-229_', 'sub-031_', 'sub-046_', 'sub-115_', 'sub-169_', 'sub-056_', 'sub-248_', 'sub-218_', 'sub-230_', 'sub-181_', 'sub-003_', 'sub-038_', 'sub-206_', 'sub-110_', 'sub-024_', 'sub-107_', 'sub-168_', 'sub-210_', 'sub-104_', 'sub-060_', 'sub-032_', 'sub-184_', 'sub-240_', 'sub-008_', 'sub-001_', 'sub-220_', 'sub-205_', 'sub-197_']
+validation = ['sub-188_', 'sub-186_', 'sub-036_', 'sub-130_', 'sub-144_', 'sub-005_', 'sub-199_', 'sub-224_', 'sub-217_', 'sub-192_', 'sub-106_', 'sub-150_', 'sub-017_']
+test = ['sub-252_', 'sub-051_', 'sub-125_', 'sub-198_', 'sub-152_', 'sub-243_', 'sub-189_', 'sub-035_', 'sub-129_', 'sub-029_', 'sub-156_', 'sub-209_', 'sub-123_']
 
 training = [t[:-1] for t in training]
 validation = [v[:-1] for v in validation]
