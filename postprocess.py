@@ -206,7 +206,7 @@ def compute_all_voting_image(path_pred):
     import os
     import nibabel as nib
 
-    for f in os.listdir(path_pred):
+    for f in sorted(os.listdir(path_pred)):
         if f.endswith('pred-offsets.nii.gz') or f.endswith('pred_offsets.nii.gz'):
             offsets_img = nib.load(os.path.join(path_pred, f))
             offsets  = offsets_img.get_fdata()
