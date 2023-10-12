@@ -295,6 +295,8 @@ def compute_metrics(args):
             pred_file_path = os.path.join(args.pred_path, pred_file)
             
             if not os.path.exists(pred_file_path):
+                pred_file_path = pred_file_path.replace('pred_instances', 'pred-instances')
+            if not os.path.exists(pred_file_path):
                 print(f"No prediction found for {pred_file}")
                 continue
 
