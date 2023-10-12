@@ -58,7 +58,7 @@ parser.add_argument('--cache_rate', default=1.0, type=float)
 parser.add_argument('--val_interval', type=int, default=5, help='Validation every n-th epochs')
 parser.add_argument('--threshold', type=float, default=0.4, help='Probability threshold')
 
-parser.add_argument('--wandb_project', type=str, default='WMLIS', help='wandb project name')
+parser.add_argument('--wandb_project', type=str, default='WMLSS', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
 parser.add_argument('--force_restart', default=False, action='store_true', help="force the training to restart at 0 even if a checkpoint was found")
 
@@ -139,7 +139,7 @@ def main(args):
     # Initialize model
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
     if os.path.exists(checkpoint_filename) and not args.force_restart:
-        model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+        model = UNet3D(in_channels=len(args.I), num_classes=2).to(device)
         
         checkpoint = torch.load(checkpoint_filename)
         
@@ -165,10 +165,11 @@ def main(args):
     else:
         if args.path_model is not None:
             print(f"Retrieving pretrained model from {args.path_model}")
+            raise NotImplementedError()
             model = get_pretrained_model(args.path_model, len(args.I))
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
-            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
+            model = UNet3D(in_channels=len(args.I), num_classes=2)
         
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
@@ -213,9 +214,9 @@ def main(args):
     gamma_focal = 2.0
     dice_weight = 0.5
     focal_weight = 1.0
-    seg_loss_weight = args.seg_loss_weight
-    heatmap_loss_weight = args.heatmap_loss_weight
-    offsets_loss_weight = args.offsets_loss_weight
+    #seg_loss_weight = args.seg_loss_weight
+    #heatmap_loss_weight = args.heatmap_loss_weight
+    #offsets_loss_weight = args.offsets_loss_weight
     dice_metric = DiceMetric(include_background=False, reduction="mean")
     best_metric_nDSC, best_metric_epoch_nDSC = -1, -1
     best_metric_DSC, best_metric_epoch_DSC = -1, -1
@@ -235,23 +236,23 @@ def main(args):
         epoch_loss = 0
         epoch_loss_ce = 0
         epoch_loss_dice = 0
-        epoch_loss_seg = 0
-        epoch_loss_mse = 0
-        epoch_loss_l1 = 0
+        #epoch_loss_seg = 0
+        #epoch_loss_mse = 0
+        #epoch_loss_l1 = 0
         step = 0
         
         for batch_data in train_loader:
             n_samples = batch_data["image"].size(0)
             for m in range(0, batch_data["image"].size(0), args.batch_size):
                 step += args.batch_size
-                inputs, labels, center_heatmap, offsets = (
+                inputs, labels = (
                     batch_data["image"][m:(m + 2)].to(device),
-                    batch_data["label"][m:(m + 2)].type(torch.LongTensor).to(device),
-                    batch_data["center_heatmap"][m:(m + 2)].to(device),
-                    batch_data["offsets"][m:(m + 2)].to(device))
+                    batch_data["label"][m:(m + 2)].type(torch.LongTensor).to(device))
+                    #batch_data["center_heatmap"][m:(m + 2)].to(device),
+                    #batch_data["offsets"][m:(m + 2)].to(device))
 
                 with torch.cuda.amp.autocast():
-                    semantic_pred, center_pred, offsets_pred = model(inputs)
+                    semantic_pred = model(inputs)
                     
                     ### SEGMENTATION LOSS ###
                     # Dice loss
@@ -265,20 +266,21 @@ def main(args):
                     segmentation_loss = dice_weight * dice_loss + focal_weight * focal_loss
                     
                     ### COM PREDICTION LOSS ###
-                    mse_loss = loss_function_mse(center_pred, center_heatmap)
+                    #mse_loss = loss_function_mse(center_pred, center_heatmap)
 
                     ### COM REGRESSION LOSS ###
-                    l1_loss = loss_function_l1(offsets_pred, offsets)
+                    #l1_loss = loss_function_l1(offsets_pred, offsets)
 
                     ### TOTAL LOSS ###
-                    loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
+                    #loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
+                    loss = segmentation_loss
 
                 epoch_loss += loss.item()
                 epoch_loss_ce += focal_loss.item()
                 epoch_loss_dice += dice_loss.item()
-                epoch_loss_seg += segmentation_loss.item()
-                epoch_loss_mse += mse_loss.item()
-                epoch_loss_l1 += l1_loss.item()
+                #epoch_loss_seg += segmentation_loss.item()
+                #epoch_loss_mse += mse_loss.item()
+                #epoch_loss_l1 += l1_loss.item()
 
                 scaler.scale(loss).backward()
 
@@ -297,9 +299,9 @@ def main(args):
         epoch_loss /= step_print
         epoch_loss_dice /= step_print
         epoch_loss_ce /= step_print
-        epoch_loss_seg /= step_print
-        epoch_loss_mse /= step_print
-        epoch_loss_l1 /= step_print
+        #epoch_loss_seg /= step_print
+        #epoch_loss_mse /= step_print
+        #epoch_loss_l1 /= step_print
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
 
@@ -309,8 +311,9 @@ def main(args):
         wandb.log(
             {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
-                'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
-                'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, }, 
+                #'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
+                #'Training Loss/Offsets Loss': epoch_loss_l1, 
+                'Learning rate': current_lr, }, 
             step=epoch)
         
         torch.save({
@@ -329,15 +332,16 @@ def main(args):
             with torch.no_grad():
                 nDSC_list = []
                 for val_data in val_loader:
-                    val_inputs, val_labels, val_heatmaps, val_offsets_pred, val_bms = (
+                    val_inputs, val_labels, val_bms = (
                         val_data["image"].to(device),
                         val_data["label"].to(device),
-                        val_data["center_heatmap"].to(device),
-                        val_data["offsets"].to(device),
+                        #val_data["center_heatmap"].to(device),
+                        #val_data["offsets"].to(device),
                         val_data["brain_mask"].squeeze().cpu().numpy()
                     )
 
-                    val_semantic_pred, val_center_pred, val_offsets = inference(val_inputs, model)
+                    val_semantic_pred = inference(val_inputs, model)
+                    #val_semantic_pred, val_center_pred, val_offsets = inference(val_inputs, model)
 
                     for_dice_outputs = [post_trans(i) for i in decollate_batch(val_semantic_pred)]
 
@@ -351,7 +355,7 @@ def main(args):
                     nDSC_list.append(nDSC)
 
                 torch.cuda.empty_cache()
-                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets_pred, for_dice_outputs, val_bms # , thresholded_output, curr_preds, gts , val_bms
+                del val_inputs, val_labels, val_semantic_pred, for_dice_outputs, val_bms # , thresholded_output, curr_preds, gts , val_bms
                 metric_nDSC = np.mean(nDSC_list)
                 metric_DSC = dice_metric.aggregate().item()
                 wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)

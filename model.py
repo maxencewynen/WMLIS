@@ -176,6 +176,40 @@ class PanopticDeepLab3D(nn.Module):
         return semantic_out, center_prediction_out, offsets_out
 
 
+class UNet3D(nn.Module):
+    def __init__(self, in_channels, num_classes, level_channels=[64, 128, 256], bottleneck_channel=512)-> None:
+        super(UNet3D, self).__init__()
+        
+        # Analysis Path
+        self.a_block1 = Conv3DBlock(in_channels=in_channels, out_channels=level_channels[0])
+        self.a_block2 = Conv3DBlock(in_channels=level_channels[0], out_channels=level_channels[1])
+        self.a_block3 = Conv3DBlock(in_channels=level_channels[1], out_channels=level_channels[2])
+        self.bottleNeck = Conv3DBlock(in_channels=level_channels[2], out_channels=bottleneck_channel, bottleneck=True)
+        
+        # Semantic Decoding Path
+        self.s_block3 = UpConv3DBlock(in_channels=bottleneck_channel, res_channels=level_channels[2])
+        self.s_block2 = UpConv3DBlock(in_channels=level_channels[2], res_channels=level_channels[1])
+        self.s_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=num_classes, last_layer=True)
+
+
+    def forward(self, input):
+        # Analysis Pathway
+        out, residual_level1 = self.a_block1(input)
+        out, residual_level2 = self.a_block2(out)
+        out, residual_level3 = self.a_block3(out)
+        out, _ = self.bottleNeck(out)
+
+        # Semantic Decoding Pathway
+        decoder_out = self.s_block3(out, residual_level3)
+        decoder_out = self.s_block2(decoder_out, residual_level2)
+        decoder_out = self.s_block1(decoder_out, residual_level1)
+
+        semantic_out = decoder_out
+
+        return semantic_out
+
+
+
 
 def get_pretrained_model(model_path, in_channels, num_classes=2):
     model = UNet3D(in_channels=1, num_classes=num_classes)

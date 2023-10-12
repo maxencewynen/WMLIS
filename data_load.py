@@ -142,7 +142,8 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         masks += [apply_mask]
         non_label_masks += [apply_mask]
     
-    other_keys = ["center_heatmap", "offsets"]
+    # other_keys = ["center_heatmap", "offsets"]
+    other_keys = []
 
     non_quantitative_images = [i for i in I if i not in QUANTITATIVE_SEQUENCES]
 
@@ -158,7 +159,7 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         transform_list += [MaskIntensityd(keys=I+masks, mask_key=apply_mask)]
 
     transform_list += [
-            LesionOffsetTransformd(keys="label"),
+            # LesionOffsetTransformd(keys="label"),
             Lambdad(keys="label", func=lambda x: (x > 0).astype(np.uint8)),
             RandCropByPosNegLabeld(keys=I+masks+other_keys,
                                    label_key="label", image_key=I[0],
@@ -207,9 +208,9 @@ def get_val_transforms(I=['FLAIR'], bm=False, apply_mask=None):
     transforms += [
             Lambdad(keys=["brain_mask"], func=lambda x: x.astype(np.uint8)),
             NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
-            LesionOffsetTransformd(keys="label"),
+            #LesionOffsetTransformd(keys="label"),
             Lambdad(keys="label", func=lambda x: (x > 0).astype(np.uint8)),
-            ToTensord(keys=I+other_keys+["center_heatmap", "offsets"]),
+            ToTensord(keys=I+other_keys),
             ConcatItemsd(keys=I, name="image", dim=0)
         ]
     return Compose(transforms)
