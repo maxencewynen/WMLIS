@@ -86,6 +86,9 @@ def compute_voting_image(offsets):
     # Compute the log of the number of votes for each voxel
     voting_image = np.log(voting_matrix + 1)  # Adding 1 to avoid log(0)
 
+    # average pooling
+    voting_image = maximum_filter(voting_image, size=(3, 3, 3))
+
     return voting_image
 
 
