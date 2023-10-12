@@ -273,7 +273,8 @@ def main(args):
                     mse_loss = loss_function_mse(center_pred, center_heatmap)
 
                     ### COM REGRESSION LOSS ###
-                    l1_loss = loss_function_l1(offsets_pred, offsets)
+                    # Disregard voxels outside of the GT segmentation
+                    l1_loss = loss_function_l1(offsets_pred * labels, offsets)
 
                     ### TOTAL LOSS ###
                     loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
