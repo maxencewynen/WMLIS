@@ -211,9 +211,10 @@ def compute_all_voting_image(path_pred):
             offsets_img = nib.load(os.path.join(path_pred, f))
             offsets  = offsets_img.get_fdata()
 
-            binary_segmentation = nib.load(os.path.join(path_pred, f[:-len('pred-offsets.nii.gz')] + 'seg-binary.nii.gz')).get_fdata()
+            binary_segmentation = os.path.join(path_pred, f[:-len('pred-offsets.nii.gz')] + 'seg-binary.nii.gz')
             if not os.path.exists(binary_segmentation):
-                binary_segmentation = nib.load(os.path.join(path_pred, f[:-len('pred_offsets.nii.gz')] + 'seg_binary.nii.gz')).get_fdata()
+                binary_segmentation = os.path.join(path_pred, f[:-len('pred_offsets.nii.gz')] + 'seg_binary.nii.gz')
+            binary_segmentation = nib.load(binary_segmentation).get_fdata()
 
             voting_image = compute_voting_image(offsets.transpose(3,0,1,2), binary_segmentation)
             filename = f[:-len('pred-offsets.nii.gz')] + 'voting-image.nii.gz'
