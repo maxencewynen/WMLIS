@@ -55,15 +55,18 @@ def simple_instance_representation(heatmap, pool_size=3, threshold=0.1, k=200):
     return maxima, coordinates
 
 
-def compute_voting_image(offsets):
+import numpy as np
+
+def compute_voting_image(offsets, binary_lesion_mask):
     """
-    Compute a voting image based on the offsets matrix.
+    Compute a voting image based on the offsets matrix for voxels inside the binary lesion mask.
 
     Args:
         offsets: 4D array (3 x depth x height x width) containing the regression offsets.
+        binary_lesion_mask: 3D binary array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
 
     Returns:
-        voting_image: 3D array containing the log of the number of votes received by each voxel.
+        voting_image: 3D array containing the log of the number of votes received by each voxel inside the lesion mask.
     """
     depth, height, width = offsets.shape[1:]
 
@@ -74,22 +77,22 @@ def compute_voting_image(offsets):
     for z in range(depth):
         for y in range(height):
             for x in range(width):
-                # Calculate the coordinates pointed to by the offsets
-                dz, dy, dx = offsets[:, z, y, x]
-                new_z, new_y, new_x = int(z + dz), int(y + dy), int(x + dx)
+                # Check if the voxel is inside the lesion mask
+                if binary_lesion_mask[z, y, x] == 1:
+                    # Calculate the coordinates pointed to by the offsets
+                    dz, dy, dx = offsets[:, z, y, x]
+                    new_z, new_y, new_x = int(z + dz), int(y + dy), int(x + dx)
 
-                # Check if the new coordinates are within bounds
-                if 0 <= new_z < depth and 0 <= new_y < height and 0 <= new_x < width:
-                    # Update the voting matrix at the new coordinates
-                    voting_matrix[new_z, new_y, new_x] += 1
+                    # Check if the new coordinates are within bounds
+                    if 0 <= new_z < depth and 0 <= new_y < height and 0 <= new_x < width:
+                        # Update the voting matrix at the new coordinates
+                        voting_matrix[new_z, new_y, new_x] += 1
 
-    # Compute the log of the number of votes for each voxel
+    # Compute the log of the number of votes for each voxel inside the lesion mask
     voting_image = np.log(voting_matrix + 1)  # Adding 1 to avoid log(0)
 
-    # average pooling
-    voting_image = maximum_filter(voting_image, size=(3, 3, 3))
-
     return voting_image
+
 
 
 def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9, compute_voting=False):
@@ -207,7 +210,12 @@ def compute_all_voting_image(path_pred):
         if f.endswith('pred-offsets.nii.gz') or f.endswith('pred_offsets.nii.gz'):
             offsets_img = nib.load(os.path.join(path_pred, f))
             offsets  = offsets_img.get_fdata()
-            voting_image = compute_voting_image(offsets.transpose(3,0,1,2))
+
+            binary_segmentation = nib.load(os.path.join(path_pred, f[:-len('pred-offsets.nii.gz')] + 'seg-binary.nii.gz')).get_fdata()
+            if not os.path.exists(binary_segmentation):
+                binary_segmentation = nib.load(os.path.join(path_pred, f[:-len('pred_offsets.nii.gz')] + 'seg_binary.nii.gz')).get_fdata()
+
+            voting_image = compute_voting_image(offsets.transpose(3,0,1,2), binary_segmentation)
             filename = f[:-len('pred-offsets.nii.gz')] + 'voting-image.nii.gz'
             filepath = os.path.join(path_pred, filename)
             nib.save(nib.Nifti1Image(voting_image, offsets_img.affine), filepath)
