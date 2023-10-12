@@ -31,13 +31,12 @@ parser.add_argument('--sequences', type=str, nargs='+', required=True,
 parser.add_argument('--apply_mask', type=str, default=None, help="Name of the mask to apply")
                     
 # parallel computation
-parser.add_argument('--num_workers', type=int, default=10,
-                    help='Number of workers to preprocess images')
+parser.add_argument('--num_workers', type=int, default=10, help='Number of workers to preprocess images')
 # hyperparameters
-parser.add_argument('--threshold', type=float, default=0.35,
-                    help='Probability threshold')
+parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
 
 parser.add_argument('--compute_dice', action="store_true", default=False, help="Whether to compute the dice over all the dataset after having predicted it")
+parser.add_argument('--compute_voting', action="store_true", default=False, help="Whether to compute the voting image")
 
 
 def get_default_device():
@@ -116,10 +115,13 @@ def main(args):
             seg[seg >= th] = 1
             seg[seg < th] = 0
             seg = np.squeeze(seg)
-            seg, instances_pred = postprocess(seg, heatmap_pred, offsets_pred)
+            if args.compute_voting:
+                seg, instances_pred, voting_image = postprocess(seg, heatmap_pred, offsets_pred, compute_voting=args.compute_voting)
+            else:
+                seg, instances_pred = postprocess(seg, heatmap_pred, offsets_pred)
             
 
-            filename = filename_or_obj[:14] + "_seg_binary.nii.gz"
+            filename = filename_or_obj[:14] + "_seg-binary.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(seg, filepath,
                         affine=original_affine,
@@ -128,7 +130,7 @@ def main(args):
                         output_spatial_shape=spatial_shape)
             
             # obtain and save predicted center heatmap
-            filename = filename_or_obj[:14] + "_pred_heatmap.nii.gz"
+            filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(heatmap_pred, filepath,
                         affine=original_affine,
@@ -136,7 +138,7 @@ def main(args):
                         output_spatial_shape=spatial_shape)
            
             # obtain and save predicted offsets
-            filename = filename_or_obj[:14] + "_pred_offsets.nii.gz"
+            filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(offsets_pred.transpose(1,2,3,0), filepath,
                         affine=original_affine,
@@ -144,13 +146,20 @@ def main(args):
                         output_spatial_shape=spatial_shape)
             
             # obtain and save predicted offsets
-            filename = filename_or_obj[:14] + "_pred_instances.nii.gz"
+            filename = filename_or_obj[:14] + "_pred-instances.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(instances_pred, filepath,
                         affine=original_affine,
                         target_affine=affine,
                         output_spatial_shape=spatial_shape)
 
+            if args.compute_voting:
+                filename = filename_or_obj[:14] + "_voting-image.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(voting_image, filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
             
             if args.compute_dice:
                 if args.test:

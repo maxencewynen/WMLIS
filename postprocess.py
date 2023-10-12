@@ -87,6 +87,7 @@ def compute_voting_image(offsets):
 
     return voting_image
 
+
 def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9, compute_voting=False):
     """
     Assign instance IDs based on offset vectors and instance centers.
@@ -98,6 +99,7 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         semantic_mask: 3D array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
         min_lesion_size: Integer. All lesions with less or equal amount of voxels than min_lesion_size will 
                 be replaced by a voting of their closest neighbours or to background (0) if no other lesion is around.
+        compute_voting: Boolean. If True, the voting image will be computed and returned.
 
     Returns:
         semantic_mask: 3D array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
@@ -181,9 +183,12 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         return instance_map, semantic_mask, voting_image
     return instance_map, semantic_mask
 
-def postprocess(semantic_mask, heatmap, offsets):
+def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     semantic_mask = remove_connected_components(semantic_mask)
     instance_centers, coordinates = simple_instance_representation(heatmap)
+    if compute_voting:
+        semantic_mask, instance_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
+        return semantic_mask, instance_mask, voting_image
+
     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
-    
     return semantic_mask, instance_mask
