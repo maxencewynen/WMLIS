@@ -53,7 +53,41 @@ def simple_instance_representation(heatmap, pool_size=3, threshold=0.1, k=200):
 
     return maxima, coordinates
 
-def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9):
+
+def compute_voting_image(offsets):
+    """
+    Compute a voting image based on the offsets matrix.
+
+    Args:
+        offsets: 4D array (3 x depth x height x width) containing the regression offsets.
+
+    Returns:
+        voting_image: 3D array containing the log of the number of votes received by each voxel.
+    """
+    depth, height, width = offsets.shape[1:]
+
+    # Create an empty voting matrix with the same shape as the offsets matrix
+    voting_matrix = np.zeros((depth, height, width))
+
+    # Iterate through all voxels in the offsets matrix
+    for z in range(depth):
+        for y in range(height):
+            for x in range(width):
+                # Calculate the coordinates pointed to by the offsets
+                dz, dy, dx = offsets[:, z, y, x]
+                new_z, new_y, new_x = int(z + dz), int(y + dy), int(x + dx)
+
+                # Check if the new coordinates are within bounds
+                if 0 <= new_z < depth and 0 <= new_y < height and 0 <= new_x < width:
+                    # Update the voting matrix at the new coordinates
+                    voting_matrix[new_z, new_y, new_x] += 1
+
+    # Compute the log of the number of votes for each voxel
+    voting_image = np.log(voting_matrix + 1)  # Adding 1 to avoid log(0)
+
+    return voting_image
+
+def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9, compute_voting=False):
     """
     Assign instance IDs based on offset vectors and instance centers.
 
@@ -66,10 +100,15 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
                 be replaced by a voting of their closest neighbours or to background (0) if no other lesion is around.
 
     Returns:
+        semantic_mask: 3D array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
         instance_map: 3D array containing the instance IDs for each pixel.
+        (if compute_voting) voting_image: 3D array containing the log of the number of votes received by each voxel.
     """
     if offsets.shape[-1] == 3:
         offsets = offsets.transpose(3,0,1,2)
+
+    if compute_voting:
+        voting_image = compute_voting_image(offsets)
     
     instance_map = np.zeros(heatmap.shape)
 
@@ -138,6 +177,8 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
                         # changed_values[z, y, x] = 1
 
     # return instance_map, before_postprocessing, changed_values
+    if compute_voting:
+        return instance_map, semantic_mask, voting_image
     return instance_map, semantic_mask
 
 def postprocess(semantic_mask, heatmap, offsets):
