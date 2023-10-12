@@ -39,6 +39,7 @@ parser.add_argument('--path_model', type=str, default=None, help='Path to pretra
 parser.add_argument('--seed', type=int, default=1, help='Specify the global random seed')
 # data
 parser.add_argument('--data_dir', type=str, default=os.environ["DATA_ROOT_DIR"], help='Specify the path to the data files directory')
+parser.add_argument('--fold', type=int, help='Specify the fold for training')
 
 parser.add_argument('--I', nargs='+', default=['FLAIR'], choices=['FLAIR', 'phase_T2starw', 'mag_T2starw',\
                                                                   'MPRAGE_reg-T2starw_T1w', 'T1map', 'UNIT1'])
@@ -183,6 +184,8 @@ def main(args):
         
         # Initialize scheduler
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
+    
+    print("\n"*2, f"****** FOLD {args.fold} ******", "\n"*2)
 
     # Initialize dataloaders
     train_loader = get_train_dataloader(data_dir=args.data_dir, 
@@ -190,12 +193,14 @@ def main(args):
                                         I=args.I, 
                                         cache_rate=args.cache_rate,
                                         apply_mask=args.apply_mask,
-                                        cp_factor=args.cp_factor)
+                                        cp_factor=args.cp_factor,
+                                        fold = args.fold)
     val_loader = get_val_dataloader(data_dir=args.data_dir, 
                                     num_workers=args.num_workers,
                                     I=args.I, 
                                     cache_rate=args.cache_rate,
-                                    apply_mask=args.apply_mask)
+                                    apply_mask=args.apply_mask, 
+                                    fold = args.fold)
     
     # Initialize losses
     loss_function_dice = DiceLoss(to_onehot_y=True,

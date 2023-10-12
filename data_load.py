@@ -19,6 +19,8 @@ from typing import Callable
 from monai.transforms import MapTransform
 from scipy.ndimage import center_of_mass
 from monai.config import KeysCollection
+from sklearn.model_selection import train_test_split, KFold
+
 
 DISCARDED_SUBJECTS=[]
 QUANTITATIVE_SEQUENCES = ["T1map"]
@@ -214,9 +216,38 @@ def get_val_transforms(I=['FLAIR'], bm=False, apply_mask=None):
         ]
     return Compose(transforms)
 
+def get_split(img_dir, train_test_seed, fold, test=False):
+    all_subjects = sorted(list(set([s[:7] for s in os.listdir(img_dir) ])))
+    print(f"Working with a total of {len(all_subjects)} subjects")
+    train_subjects, remaining_subjects = train_test_split(all_subjects, test_size=0.4, random_state=train_test_seed)
+    val_subjects, test_subjects = train_test_split(remaining_subjects, test_size=0.5, random_state=train_test_seed)
+
+    all_train_subjects = train_subjects + val_subjects
+    if not fold is None:
+        kf = KFold(n_splits=5, random_state=train_test_seed, shuffle=True)
+        split = kf.split(all_train_subjects) 
+        train_subjects, val_subjects = None, None
+        for i, (t, v) in enumerate(split):
+            if i != fold: continue
+            train_subjects, val_subjects = t,v
+
+        if train_subjects is None or val_subjects is None:
+            raise ValueError(f'Fold {fold} does not exists')
+        
+        train_subjects = [all_train_subjects[t] for t in train_subjects]
+        val_subjects = [all_train_subjects[v] for v in val_subjects]
+    else:
+        if not test:
+            print("Warning: fold is None, but test is set False: test subjects will be chosen. Is this really what you want to do?")
+
+        train_subjects = all_train_subjects
+        val_subjects = test_subjects
+
+    return train_subjects, val_subjects
+    
 
 
-def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAIR'], apply_mask=None, cp_factor=0):
+def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAIR'], apply_mask=None, cp_factor=0, train_test_seed=0, fold=None):
     """
     Get dataloader for training
     Args:
@@ -230,11 +261,14 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
     """ 
     assert os.path.exists(data_dir), f"data_dir path does not exist ({data_dir})"
     assert apply_mask is None or type(apply_mask) == str
-    traindir = "train" if cp_factor==0 else f"train_scp-f{cp_factor}_cl5"
+    traindir = "all" 
     img_dir = pjoin(data_dir, traindir, "images")
     lbl_dir = pjoin(data_dir, traindir, "labels")
-    bm_path = pjoin(data_dir, "train", "brainmasks")
-    mask_path = None if not apply_mask else pjoin(data_dir, "train", apply_mask)
+    bm_path = pjoin(data_dir, traindir, "brainmasks")
+    mask_path = None if not apply_mask else pjoin(data_dir, traindir, apply_mask)
+    
+    train_subjects, _ = get_split(img_dir, train_test_seed, fold)
+    print("Training with subjects: ", sorted(train_subjects))
 
     # Collect all modality images sorted
     all_modality_images = {}
@@ -242,7 +276,7 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
         i: [
             pjoin(img_dir, s)
             for s in sorted(list(os.listdir(img_dir)))
-            if s.endswith(i + ".nii.gz") and not any(subj in s for subj in DISCARDED_SUBJECTS)
+            if s.endswith(i + ".nii.gz") and not any(subj in s for subj in DISCARDED_SUBJECTS) and any(subj in s for subj in train_subjects)
         ]
         for i in I
     }
@@ -256,13 +290,13 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
     
     # Collect all corresponding ground truths
     maskname = "mask-instances"
-    segs = [pjoin(lbl_dir, f) for f in sorted(list(os.listdir(lbl_dir))) if f.endswith(maskname + ".nii.gz")]
+    segs = [pjoin(lbl_dir, f) for f in sorted(list(os.listdir(lbl_dir))) if f.endswith(maskname + ".nii.gz") and any(subj in f for subj in train_subjects) ]
 
     assert len(all_modality_images[I[0]]) == len(segs), "Number of multi-modal images and ground truths must be the same"
     
     files = []
     
-    bms = [pjoin(bm_path, f) for f in sorted(list(os.listdir(bm_path))) if f.endswith("brainmask.nii.gz")]
+    bms = [pjoin(bm_path, f) for f in sorted(list(os.listdir(bm_path))) if f.endswith("brainmask.nii.gz")  and any(subj in f for subj in train_subjects)]
     if not apply_mask:
         assert len(all_modality_images[I[0]]) == len(segs) == len(bms), f"Some files must be missing: {[len(all_modality_images[I[0]]), len(segs), len(bms)]}"
     
@@ -273,7 +307,7 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
             files.append(file_dict)
 
     else:
-        masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz")]
+        masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz")] and any(subj in f for subj in train_subjects)
         assert len(all_modality_images[I[0]]) == len(segs) == len(bms) == len(masks), \
                 f"Some files must be missing: {[len(all_modality_images[I[0]]), len(segs), len(bms, len(masks))]}"
 
@@ -293,7 +327,7 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
     return DataLoader(ds, batch_size=1, shuffle=True,  num_workers=num_workers)
 
 
-def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=False, apply_mask=None):
+def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=False, apply_mask=None, train_test_seed=0, fold=None):
     """
     Get dataloader for validation and testing. Either with or without brain masks.
 
@@ -311,13 +345,22 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
 
     assert os.path.exists(data_dir), f"data_dir path does not exist ({data_dir})"
     assert apply_mask is None or type(apply_mask) == str
-    img_dir = pjoin(data_dir, "val", "images") if not test else pjoin(data_dir, "test", "images")
-    lbl_dir = pjoin(data_dir, "val", "labels") if not test else pjoin(data_dir, "test", "labels")
-    bm_path = pjoin(data_dir, "val", "brainmasks") if not test else pjoin(data_dir, "test", "brainmasks")
+    img_dir = pjoin(data_dir, "all", "images")
+    lbl_dir = pjoin(data_dir, "all", "labels") 
+    bm_path = pjoin(data_dir, "all", "brainmasks") 
     if not apply_mask:
         mask_path=None 
     else:
-        mask_path = pjoin(data_dir, "val", apply_mask) if not test else pjoin(data_dir, "test", apply_mask)
+        mask_path = pjoin(data_dir, "all", apply_mask) 
+
+    if test:
+        if not fold is None:
+            print("Warning: fold is not None, while test is True. Setting fold to None.")
+        _, subjects = get_split(img_dir, train_test_seed, None, test)
+    else:
+        _, subjects = get_split(img_dir, train_test_seed, fold, test)
+
+    print("Validating on subjects: ", sorted(subjects))
 
     # Collect all modality images sorted
     all_modality_images = {}
@@ -325,7 +368,7 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
         i: [
             pjoin(img_dir, s)
             for s in sorted(list(os.listdir(img_dir)))
-            if s.endswith(i + ".nii.gz") and not any(subj in s for subj in DISCARDED_SUBJECTS)
+            if s.endswith(i + ".nii.gz") and not any(subj in s for subj in DISCARDED_SUBJECTS) and any(subj in s for subj in subjects)
         ]
         for i in I
     }
@@ -339,13 +382,13 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
     
     # Collect all corresponding ground truths
     maskname = "mask-instances"
-    segs = [pjoin(lbl_dir, f) for f in sorted(list(os.listdir(lbl_dir))) if f.endswith(maskname + ".nii.gz")]
+    segs = [pjoin(lbl_dir, f) for f in sorted(list(os.listdir(lbl_dir))) if f.endswith(maskname + ".nii.gz") and any(subj in f for subj in subjects)]
 
     assert len(all_modality_images[I[0]]) == len(segs), "Number of multi-modal images and ground truths must be the same"
     
     files = []
     if bm_path is not None:
-        bms = [pjoin(bm_path, f) for f in sorted(list(os.listdir(bm_path))) if f.endswith("brainmask.nii.gz")]
+        bms = [pjoin(bm_path, f) for f in sorted(list(os.listdir(bm_path))) if f.endswith("brainmask.nii.gz") and any(subj in f for subj in subjects)]
         if not apply_mask:
             assert len(all_modality_images[I[0]]) == len(segs) == len(bms), f"Some files must be missing: {[len(all_modality_images[I[0]]), len(segs), len(bms)]}"
         
@@ -356,7 +399,7 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
                 files.append(file_dict)
             
         else:
-            masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz")]
+            masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz") and any(subj in f for subj in subjects)]
             assert len(all_modality_images[I[0]]) == len(segs) == len(bms) == len(masks), \
                     f"Some files must be missing: {[len(all_modality_images[I[0]]), len(segs), len(bms), len(masks)]}"
 
@@ -377,7 +420,7 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
                     file_dict[modality] = all_modality_images[modality][i]
                 files.append(file_dict)
         else:
-            masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz")]
+            masks = [pjoin(mask_path, f) for f in sorted(list(os.listdir(mask_path))) if f.endswith(".nii.gz") and any(subj in f for subj in subjects)]
             assert len(all_modality_images[I[0]]) == len(segs) == len(bms) == len(masks), \
                     f"Some files must be missing: {[len(all_modality_images[I[0]]), len(segs), len(bms), len(masks)]}"
 
@@ -425,7 +468,8 @@ def remove_connected_components(segmentation, l_min=9):
 
 
 if __name__ == "__main__":
-    dl = get_train_dataloader(data_dir="/home/mwynen/data/bxl", num_workers= 1, I=["FLAIR"])
+    dl = get_train_dataloader(data_dir="/home/mwynen/data/cusl_wml", num_workers= 1, I=["FLAIR"], fold=4)
+    #dl = get_val_dataloader(data_dir="/home/mwynen/data/cusl_wml", num_workers= 1, I=["FLAIR"], fold=0, test=True)
     for x in dl:
         break
     breakpoint()
