@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.ndimage import maximum_filter, generate_binary_structure, label, labeled_comprehension
+import argparse
 
 
 def remove_connected_components(segmentation, l_min=9):
@@ -183,6 +184,7 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         return instance_map, semantic_mask, voting_image
     return instance_map, semantic_mask
 
+
 def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     semantic_mask = remove_connected_components(semantic_mask)
     instance_centers, coordinates = simple_instance_representation(heatmap)
@@ -192,3 +194,34 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
 
     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
     return semantic_mask, instance_mask
+
+
+def compute_all_voting_image(path_pred):
+    import os
+    import nibabel as nib
+
+    for f in os.listdir(path_pred):
+        if f.endswith('pred-offsets.nii.gz'):
+            offsets_img = nib.load(os.path.join(path_pred, f))
+            offsets  = offsets_img.get_fdata()
+            voting_image = compute_voting_image(offsets.transpose(3,0,1,2))
+            filename = f[:-len('pred-offsets.nii.gz')] + 'voting-image.nii.gz'
+            filepath = os.path.join(path_pred, filename)
+            nib.save(nib.Nifti1Image(voting_image, offsets_img.affine), filepath)
+            print(f"Saved {filename}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Get all command line arguments.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--compute_voting', action="store_true", default=False,
+                        help="Whether to compute the voting image")
+    parser.add_argument('--path_pred', help="Path to the predictions")
+
+    args = parser.parse_args()
+
+    if args.compute_voting:
+        compute_all_voting_image(path_pred=args.path_pred)
+    else:
+        print("Nothing asked, nothing done.")
+
