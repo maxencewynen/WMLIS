@@ -118,6 +118,22 @@ post_trans = Compose(
 )
 
 
+def min_max_grad(model):
+
+    full_grads = [x.grad for x in model.parameters()]
+    maxi = 0
+    max_grad = 0
+    mini = 1e20
+    min_grad = 1e20
+    for grad in full_grads:
+        if(not(grad is None)):
+            maxi = torch.max(torch.abs(grad))
+            max_grad = max(max_grad,maxi)    
+            mini = torch.min(torch.abs(grad))
+            min_grad = min(min_grad,mini) 
+    return min_grad, max_grad
+
+
 def main(args):
     check_paths(args)
     seed_val = args.seed
@@ -169,7 +185,13 @@ def main(args):
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
-        
+            #torch.manual_seed(1)
+            #for layer in model.children():
+            #    if isinstance(layer, nn.Linear):
+            #        nn.init.xavier_uniform_(layer.weight)
+            #        nn.init.zeros_(layer.bias)
+
+            #torch.manual_seed(seed_val)
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
         rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
@@ -225,6 +247,7 @@ def main(args):
     scaler = torch.cuda.amp.GradScaler()
     step_print = 1
 
+    import nibabel as nib
     
     ''' Training loop '''
     for epoch in range(start_epoch, epoch_num):
@@ -240,6 +263,9 @@ def main(args):
         epoch_loss_l1 = 0
         step = 0
         
+        ex = epoch
+        done = True
+
         for batch_data in train_loader:
             n_samples = batch_data["image"].size(0)
             for m in range(0, batch_data["image"].size(0), args.batch_size):
@@ -253,6 +279,16 @@ def main(args):
                 with torch.cuda.amp.autocast():
                     semantic_pred, center_pred, offsets_pred = model(inputs)
                     
+                    if not done:
+                        nib.save(nib.Nifti1Image(inputs[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"image_{ex}.nii.gz")
+                        nib.save(nib.Nifti1Image(labels[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"labels_{ex}.nii.gz")
+                        nib.save(nib.Nifti1Image(center_heatmap[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"center_{ex}.nii.gz")
+                        nib.save(nib.Nifti1Image(offsets[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"offsets_{ex}.nii.gz")
+                        nib.save(nib.Nifti1Image(semantic_pred[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"pred-labels_{ex}.nii.gz")
+                        nib.save(nib.Nifti1Image(offsets_pred[0].detach().cpu().numpy().squeeze().astype(np.float32), affine=np.eye(4)), f"pred-offsets_{ex}.nii.gz")
+
+                    done = True
+
                     ### SEGMENTATION LOSS ###
                     # Dice loss
                     dice_loss = loss_function_dice(semantic_pred, labels)
@@ -269,7 +305,11 @@ def main(args):
 
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
-                    l1_loss = loss_function_l1(offsets_pred * labels, offsets)
+                    #l1_loss = loss_function_l1(offsets_pred * labels, offsets)
+                    masked_pred_offsets = pred_offsets[labels==1]
+                    masked_offsets = offsets[labels==1]
+                    l1_loss = loss_function_l1(masked_pred_offsets, masked_offsets)
+
 
                     ### TOTAL LOSS ###
                     loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
@@ -307,11 +347,14 @@ def main(args):
         current_lr = optimizer.param_groups[0]['lr']
         lr_scheduler.step()
 
+        min_grad, max_grad = min_max_grad(model)
+
         wandb.log(
             {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
                 'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
-                'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, }, 
+                'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, 
+				'Gradients/Min Gradient': min_grad, 'Gradients/Max Gradient': max_grad}, 
             step=epoch)
         
         torch.save({
