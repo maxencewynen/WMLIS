@@ -306,8 +306,8 @@ def main(args):
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
                     #l1_loss = loss_function_l1(offsets_pred * labels, offsets)
-                    masked_pred_offsets = pred_offsets[labels==1]
-                    masked_offsets = offsets[labels==1]
+                    masked_pred_offsets = offsets_pred[labels.expand_as(offsets_pred)==1]
+                    masked_offsets = offsets[labels.expand_as(offsets_pred)==1]
                     l1_loss = loss_function_l1(masked_pred_offsets, masked_offsets)
 
 
