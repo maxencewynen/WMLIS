@@ -195,8 +195,12 @@ def main(args):
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
         rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
-        optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
-             {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+        #optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
+        #     {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+        optimizer = torch.optim.SGD([
+                {'params': first_layer_params, 'lr': args.learning_rate},
+                {'params': rest_of_model_params, 'lr': flr}
+            ], lr=args.learning_rate, weight_decay=0.0005)
         
         start_epoch = 0
         wandb.login()
