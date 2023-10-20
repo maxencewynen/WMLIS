@@ -154,7 +154,8 @@ class PanopticDeepLab3D(nn.Module):
         self.s_block3 = UpConv3DBlock(in_channels=bottleneck_channel, res_channels=level_channels[2])
         self.s_block2 = UpConv3DBlock(in_channels=level_channels[2], res_channels=level_channels[1])
         self.s_block1_seg = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=4, last_layer=True)
-        self.s_block1_oc = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=4, last_layer=True)
+        self.s_block1_offsets = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=3, last_layer=True)
+        self.s_block1_center = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=1, last_layer=True)
 
     def forward(self, input):
         # Analysis Pathway
@@ -169,11 +170,11 @@ class PanopticDeepLab3D(nn.Module):
         decoder_out = self.s_block3(out, residual_level3)
         decoder_out = self.s_block2(decoder_out, residual_level2)
         seg_decoder_out = self.s_block1_seg(decoder_out, residual_level1)
-        oc_decoder_out = self.s_block1_oc(decoder_out, residual_level1)
+        #oc_decoder_out = self.s_block1_oc(decoder_out, residual_level1)
 
         semantic_out = seg_decoder_out
-        center_prediction_out = oc_decoder_out[:,0]
-        offsets_out = decoder_out[:,1:]
+        center_prediction_out = self.s_block1_center(decoder_out, residual_level1)
+        offsets_out = self.s_block1_offsets(decoder_out, residual_level1)
 
         return semantic_out, center_prediction_out, offsets_out
 
