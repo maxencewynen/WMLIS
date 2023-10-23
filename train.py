@@ -309,14 +309,13 @@ def main(args):
 
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
-                    #l1_loss = loss_function_l1(offsets_pred * labels, offsets)
-                    if (labels.expand_as(offsets_pred) == 1).sum() == 0:
-                        l1_loss = torch.tensor(0.0).to(device)
+                    
+                    offset_loss_weights_matrix = labels.expand_as(offsets_pred)
+                    offset_loss = loss_function_l1(offsets_pred, offsets) * offset_loss_weights_matrix
+                    if offset_loss_weights_matrix.sum() > 0:
+                        l1_loss = offset_loss.sum() / offset_loss_weights_matrix.sum()
                     else:
-                        masked_pred_offsets = offsets_pred[labels.expand_as(offsets_pred)==1]
-                        masked_offsets = offsets[labels.expand_as(offsets_pred)==1]
-                        l1_loss = loss_function_l1(masked_pred_offsets, masked_offsets)
-
+                        l1_loss = offset_loss.sum() * 0
 
                     ### TOTAL LOSS ###
                     loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
