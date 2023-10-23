@@ -228,7 +228,7 @@ def main(args):
                                   softmax=True, sigmoid=False,
                                   include_background=False)
     loss_function_mse = nn.MSELoss()
-    loss_function_l1 = nn.L1Loss()
+    loss_function_l1 = nn.SmoothL1Loss()
     
     
     # Initialize other variables and metrics
