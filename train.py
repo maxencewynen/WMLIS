@@ -202,7 +202,7 @@ def main(args):
                                   softmax=True, sigmoid=False,
                                   include_background=False)
     loss_function_mse = nn.MSELoss()
-    loss_function_l1 = nn.L1Loss()
+    offset_loss_fn = nn.L1Loss()
     
     
     # Initialize other variables and metrics
@@ -225,7 +225,6 @@ def main(args):
     scaler = torch.cuda.amp.GradScaler()
     step_print = 1
 
-    
     ''' Training loop '''
     for epoch in range(start_epoch, epoch_num):
         start_epoch_time = time.time()
@@ -237,7 +236,7 @@ def main(args):
         epoch_loss_dice = 0
         epoch_loss_seg = 0
         epoch_loss_mse = 0
-        epoch_loss_l1 = 0
+        epoch_loss_offsets = 0
         step = 0
         
         for batch_data in train_loader:
@@ -269,17 +268,22 @@ def main(args):
 
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
-                    l1_loss = loss_function_l1(offsets_pred * labels, offsets)
+                    offset_loss_weights_matrix = labels.expand_as(offsets_pred)
+                    offset_loss = offset_loss_fn(offsets_pred, offsets) * offset_loss_weights_matrix
+                    if offset_loss_weights_matrix.sum() > 0:
+                        offset_loss = offset_loss.sum() / offset_loss_weights_matrix.sum()
+                    else:
+                        offset_loss = offset_loss.sum() * 0
 
                     ### TOTAL LOSS ###
-                    loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * l1_loss)
+                    loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (offsets_loss_weight * offset_loss)
 
                 epoch_loss += loss.item()
                 epoch_loss_ce += focal_loss.item()
                 epoch_loss_dice += dice_loss.item()
                 epoch_loss_seg += segmentation_loss.item()
                 epoch_loss_mse += mse_loss.item()
-                epoch_loss_l1 += l1_loss.item()
+                epoch_loss_offsets += offset_loss.item()
 
                 scaler.scale(loss).backward()
 
@@ -300,7 +304,7 @@ def main(args):
         epoch_loss_ce /= step_print
         epoch_loss_seg /= step_print
         epoch_loss_mse /= step_print
-        epoch_loss_l1 /= step_print
+        epoch_loss_offsets /= step_print
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
 
@@ -311,7 +315,7 @@ def main(args):
             {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
                 'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
-                'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, }, 
+                'Training Loss/Offsets Loss': epoch_loss_offsets, 'Learning rate': current_lr, },
             step=epoch)
         
         torch.save({
@@ -323,8 +327,6 @@ def main(args):
         }, checkpoint_filename)
 
         ##### Validation #####
-
-
         if (epoch + 1) % val_interval == 0:
             model.eval()
             with torch.no_grad():
