@@ -28,7 +28,7 @@ setup_config()
 
 parser = argparse.ArgumentParser(description='Get all command line arguments.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 # trainining
-parser.add_argument('--frozen_learning_rate', type=float, default=-1, help='Specify the initial learning rate')
+parser.add_argument('--offsets_lr', type=float, default=-1, help='Specify the learning rate for the layers predicting the offsets')
 parser.add_argument('--learning_rate', type=float, default=1e-5, help='Specify the initial learning rate')
 parser.add_argument('--seg_loss_weight', type=float, default=1, help='Specify the weight of the segmentation loss')
 parser.add_argument('--heatmap_loss_weight', type=float, default=100, help='Specify the weight of the heatmap loss')
@@ -150,7 +150,7 @@ def main(args):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)    
     
-    flr = args.learning_rate if args.frozen_learning_rate < 0 else args.frozen_learning_rate
+    offsets_lr = args.learning_rate if args.offsets_lr < 0 else args.offsets_lr
 
     # Initialize model
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
@@ -161,12 +161,11 @@ def main(args):
         
         start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
-        
-        first_layer_params = model.a_block1.conv1.parameters()
-        rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
-        
-        optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
-            {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
+
+        offsets_params = model.s_block1_offsets.parameters()
+        optimizer = torch.optim.SGD(
+                [{'params': offsets_params, 'lr': offsets_lr},], 
+                lr=args.learning_rate, weight_decay=0.0005) #momentum=0.9,
         optimizer.load_state_dict(checkpoint['optimizer'])
         
         wandb_run_id = checkpoint['wandb_run_id']
@@ -193,15 +192,14 @@ def main(args):
 
             #torch.manual_seed(seed_val)
         model.to(device)
-        first_layer_params = model.a_block1.conv1.parameters()
-        rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
+
+        offsets_params = model.s_block1_offsets.parameters() 
         #optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
         #     {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
         optimizer = torch.optim.SGD([
-                {'params': first_layer_params, 'lr': args.learning_rate},
-                {'params': rest_of_model_params, 'lr': flr}
-            ], lr=args.learning_rate, weight_decay=0.0005)
-        
+            {'params': offsets_params, 'lr': args.offsets_lr}
+        ], lr=args.learning_rate, weight_decay=0.0005)
+ 
         start_epoch = 0
         wandb.login()
         wandb.init(project=args.wandb_project, mode="online", name=args.name)
@@ -348,19 +346,25 @@ def main(args):
         epoch_loss_mse /= step_print
         epoch_loss_l1 /= step_print
         epoch_loss_values.append(epoch_loss)
-        print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
+        print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f} // aSL: {epoch_loss_seg:.4f} // aCPL {epoch_loss_ce:.4f} // aOL {epoch_loss_l1:.4f}")
 
         current_lr = optimizer.param_groups[0]['lr']
         lr_scheduler.step()
 
         min_grad, max_grad = min_max_grad(model)
+        min_grad_offsets, max_grad_offsets = min_max_grad(model.s_block1_offsets)
+        min_grad_seg, max_grad_seg = min_max_grad(model.s_block1_seg)
+        min_grad_cp, max_grad_cp = min_max_grad(model.s_block1_center)
 
         wandb.log(
             {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
                 'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
                 'Training Loss/Offsets Loss': epoch_loss_l1, 'Learning rate': current_lr, 
-				'Gradients/Min Gradient': min_grad, 'Gradients/Max Gradient': max_grad}, 
+				'Gradients/Min Gradient': min_grad, 'Gradients/Max Gradient': max_grad, 
+				'Gradients/Min Offsets Gradient': min_grad_offsets, 'Gradients/Max Offsets Gradient': max_grad_offsets, 
+				'Gradients/Min Seg Gradient': min_grad_seg, 'Gradients/Max Seg Gradient': max_grad_seg, 
+				'Gradients/Min CP Gradient': min_grad_cp, 'Gradients/Max CP Gradient': max_grad_cp}, 
             step=epoch)
         
         torch.save({
