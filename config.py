@@ -4,8 +4,8 @@ import socket
 
 def setup_config(server=None):
     hostname = socket.gethostname()
-    if server in ("jason", "Hatysa", "waldo", "canicula", "cassiopee", "elen") or \
-            hostname in ("jason", "Hatysa", "waldo", "canicula", "cassiopee"):
+    if server in ("Jason", "Hatysa", "waldo", "canicula", "cassiopee", "elen") or \
+            hostname in ("Jason", "Hatysa", "waldo", "canicula", "cassiopee"):
         os.environ["DATA_ROOT_DIR"] = r"/home/mwynen/data/cusl_wml"
         os.environ["MODELS_ROOT_DIR"] = r"/home/mwynen/models/WMLIS"
     elif server == "manneback" or hostname.endswith("cism.ucl.ac.be"):
