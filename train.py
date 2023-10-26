@@ -33,6 +33,7 @@ parser.add_argument('--learning_rate', type=float, default=1e-5, help='Specify t
 parser.add_argument('--seg_loss_weight', type=float, default=1, help='Specify the weight of the segmentation loss')
 parser.add_argument('--heatmap_loss_weight', type=float, default=100, help='Specify the weight of the heatmap loss')
 parser.add_argument('--offsets_loss_weight', type=float, default=10, help='Specify the weight of the offsets loss')
+parser.add_argument('--offsets_loss', type=str, default="l1", help="Specify the loss used for the offsets. ('sl1' or 'l1')")
 parser.add_argument('--n_epochs', type=int, default=300, help='Specify the number of epochs to train for')
 parser.add_argument('--path_model', type=str, default=None, help='Path to pretrained model')
 # initialisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
@@ -202,7 +203,10 @@ def main(args):
                                   softmax=True, sigmoid=False,
                                   include_background=False)
     loss_function_mse = nn.MSELoss()
-    offset_loss_fn = nn.L1Loss()
+    if args.offsets_loss=='l1':
+        offset_loss_fn = nn.L1Loss(reduction='none')
+    elif args.offsets_loss == 'sl1':
+        offset_loss_fn = nn.SmoothL1Loss(reduction='none')
     
     
     # Initialize other variables and metrics
@@ -265,7 +269,7 @@ def main(args):
                     
                     ### COM PREDICTION LOSS ###
                     mse_loss = loss_function_mse(center_pred, center_heatmap)
-
+                    
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
                     offset_loss_weights_matrix = labels.expand_as(offsets_pred)
