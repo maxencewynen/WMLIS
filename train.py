@@ -376,7 +376,7 @@ def main(args):
                     print(f"Computing instance segmentation metrics! (DSC = {metric_DSC:.4f})")
                     for val_data in tqdm(val_loader):
 
-                        val_inputs, val_labels, val_heatmaps, val_offsets_pred, val_bms = (
+                        val_inputs, val_labels, val_bms = (
                             val_data["image"].to(device),
                             val_data["label"].to(device),
                             #val_data["center_heatmap"].to(device),
@@ -384,14 +384,15 @@ def main(args):
                             val_data["brain_mask"].squeeze().cpu().numpy()
                         )
 
-                        val_semantic_pred, val_center_pred, val_offsets = inference(val_inputs, model)
+                        val_semantic_pred = inference(val_inputs, model)
 
                         val_semantic_pred = act(val_semantic_pred)[:, 1]
                         val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
                         val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
                         for i in range(val_labels.shape[0]): # for every image in batch
-                            sem_pred, inst_pred = val_semantic_pred, val_semantic_pred # TODO
+                            sem_pred = val_semantic_pred
+                            inst_pred = postprocess_binary_segmentation(sem_pred)
                             matched_pairs, unmatched_pred, unmatched_ref = match_instances(sem_pred, val_labels.squeeze().cpu().numpy())
                             pq_val = panoptic_quality(pred = sem_pred, ref=val_labels.squeeze().cpu().numpy(), \
                                                             matched_pairs=matched_pairs, unmatched_pred=unmatched_pred, unmatched_ref=unmatched_ref)

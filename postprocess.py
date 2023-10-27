@@ -2,6 +2,17 @@ import numpy as np
 from scipy.ndimage import maximum_filter, generate_binary_structure, label, labeled_comprehension
 import argparse
 
+def postprocess_binary_segmentation(binary_segmentation, threshold=0.5, min_lesion_size=9):
+    # Threshold the image
+    binary_data = np.where(binary_segmentation >= threshold, 1, 0).astype(np.uint8)
+
+    # Remove objects smaller than 9 voxels
+    binary_data = remove_connected_components(binary_data, l_min=min_lesion_size)
+
+    # Find connected components larger than 9 voxels
+    labeled_array, num_features = label(binary_data)
+
+    return labeled_array
 
 def remove_connected_components(segmentation, l_min=9):
     """
