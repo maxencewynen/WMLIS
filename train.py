@@ -1,8 +1,3 @@
-"""
-@author: Originally by Francesco La Rosa
-         Adapted by Vatsal Raina, Nataliia Molchanova
-"""
-
 import argparse
 import os
 import torch
@@ -30,6 +25,8 @@ setup_config()
 
 parser = argparse.ArgumentParser(description='Get all command line arguments.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 # trainining
+parser.add_argument('--separate_decoders', action="store_true", default=False,
+                    help="Whether to use separate decoders for the segmentation and center prediction tasks")
 parser.add_argument('--frozen_learning_rate', type=float, default=-1, help='Specify the initial learning rate')
 parser.add_argument('--learning_rate', type=float, default=1e-5, help='Specify the initial learning rate')
 parser.add_argument('--seg_loss_weight', type=float, default=1, help='Specify the weight of the segmentation loss')
@@ -143,7 +140,8 @@ def main(args):
     # Initialize model
     checkpoint_filename = os.path.join(save_dir,'checkpoint.pth.tar')
     if os.path.exists(checkpoint_filename) and not args.force_restart:
-        model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2).to(device)
+        model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2, separate_decoders=args.separate_decoders,
+                                  scale_offsets=args.offsets_scale).to(device)
         
         checkpoint = torch.load(checkpoint_filename)
         
@@ -276,8 +274,6 @@ def main(args):
                     mse_loss = loss_function_mse(center_pred, center_heatmap)
                     
                     ### COM REGRESSION LOSS ###
-                    # Scale offsets output
-                    offsets_pred *= args.offsets_scale
                     # Disregard voxels outside of the GT segmentation
                     offset_loss_weights_matrix = labels.expand_as(offsets_pred)
                     offset_loss = offset_loss_fn(offsets_pred, offsets) * offset_loss_weights_matrix
