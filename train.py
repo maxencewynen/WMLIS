@@ -15,7 +15,7 @@ from monai.metrics import DiceMetric
 from monai.utils import set_determinism
 import numpy as np
 import random
-from metrics import dice_metric
+from metrics import *
 from data_load import get_train_dataloader, get_val_dataloader
 import wandb
 from os.path import join as pjoin
@@ -23,6 +23,8 @@ from metrics import *
 from model import *
 import time
 from config import setup_config
+from postprocess import postprocess
+from tqdm import tqdm
 
 setup_config()
 
@@ -33,6 +35,8 @@ parser.add_argument('--learning_rate', type=float, default=1e-5, help='Specify t
 parser.add_argument('--seg_loss_weight', type=float, default=1, help='Specify the weight of the segmentation loss')
 parser.add_argument('--heatmap_loss_weight', type=float, default=100, help='Specify the weight of the heatmap loss')
 parser.add_argument('--offsets_loss_weight', type=float, default=10, help='Specify the weight of the offsets loss')
+parser.add_argument('--offsets_scale', type=float, default=1, help='Specify the scale to multiply the predicted offsets with')
+parser.add_argument('--offsets_loss', type=str, default="l1", help="Specify the loss used for the offsets. ('sl1' or 'l1')")
 parser.add_argument('--n_epochs', type=int, default=300, help='Specify the number of epochs to train for')
 parser.add_argument('--path_model', type=str, default=None, help='Path to pretrained model')
 # initialisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
@@ -110,7 +114,7 @@ def get_default_device():
         return torch.device('cuda')
     else:
         raise Exception("CUDA WAS NOT DETECTED !!!")
-        return torch.device('cpu')
+    return torch.device('cpu')
 
 
 post_trans = Compose(
@@ -203,7 +207,10 @@ def main(args):
                                   softmax=True, sigmoid=False,
                                   include_background=False)
     loss_function_mse = nn.MSELoss()
-    loss_function_l1 = nn.L1Loss()
+    if args.offsets_loss=='l1':
+        offset_loss_fn = nn.L1Loss(reduction='none')
+    elif args.offsets_loss == 'sl1':
+        offset_loss_fn = nn.SmoothL1Loss(reduction='none')
     
     
     # Initialize other variables and metrics
@@ -220,13 +227,14 @@ def main(args):
     dice_metric = DiceMetric(include_background=False, reduction="mean")
     best_metric_nDSC, best_metric_epoch_nDSC = -1, -1
     best_metric_DSC, best_metric_epoch_DSC = -1, -1
+    best_metric_PQ, best_metric_epoch_PQ = -1, -1
+    best_metric_F1, best_metric_epoch_F1 = -1, -1
     epoch_loss_values, metric_values_nDSC, metric_values_DSC = [], [], []
     
     # Initialize scaler
     scaler = torch.cuda.amp.GradScaler()
     step_print = 1
 
-    
     ''' Training loop '''
     for epoch in range(start_epoch, epoch_num):
         start_epoch_time = time.time()
@@ -312,8 +320,8 @@ def main(args):
             {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
                 #'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
-                #'Training Loss/Offsets Loss': epoch_loss_l1, 
-                'Learning rate': current_lr, }, 
+                #'Training Loss/Offsets Loss': epoch_loss_l1,
+                'Learning rate': current_lr, },
             step=epoch)
         
         torch.save({
@@ -325,8 +333,6 @@ def main(args):
         }, checkpoint_filename)
 
         ##### Validation #####
-
-
         if (epoch + 1) % val_interval == 0:
             model.eval()
             with torch.no_grad():
@@ -362,23 +368,76 @@ def main(args):
                 metric_values_nDSC.append(metric_nDSC)
                 metric_values_DSC.append(metric_DSC)
 
-                if metric_nDSC > best_metric_nDSC:# and epoch > 5:
+                metric_PQ, metric_F1 = 0,0
+
+                if metric_DSC > 0.5:
+                    pqs = []
+                    fbetas = []
+                    print(f"Computing instance segmentation metrics! (DSC = {metric_DSC:.4f})")
+                    for val_data in tqdm(val_loader):
+
+                        val_inputs, val_labels, val_bms = (
+                            val_data["image"].to(device),
+                            val_data["label"].to(device),
+                            #val_data["center_heatmap"].to(device),
+                            #val_data["offsets"].to(device),
+                            val_data["brain_mask"].squeeze().cpu().numpy()
+                        )
+
+                        val_semantic_pred = inference(val_inputs, model)
+
+                        val_semantic_pred = act(val_semantic_pred)[:, 1]
+                        val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
+                                                    torch.tensor(0.0).to(device))
+                        val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
+                        for i in range(val_labels.shape[0]): # for every image in batch
+                            sem_pred = val_semantic_pred
+                            inst_pred = postprocess_binary_segmentation(sem_pred)
+                            matched_pairs, unmatched_pred, unmatched_ref = match_instances(sem_pred, val_labels.squeeze().cpu().numpy())
+                            pq_val = panoptic_quality(pred = sem_pred, ref=val_labels.squeeze().cpu().numpy(), \
+                                                            matched_pairs=matched_pairs, unmatched_pred=unmatched_pred, unmatched_ref=unmatched_ref)
+                            fbeta_val = f_beta_score(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred, unmatched_ref=unmatched_ref)
+                            pqs += [pq_val]
+                            fbetas += [fbeta_val]
+
+                    metric_PQ = np.mean(pqs)
+                    metric_F1 = np.mean(fbetas)
+
+                    wandb.log({'Instance Segmentation Metrics/PQ (val)': metric_PQ, 'Instance Segmentation Metrics/F1 (val)': metric_F1}, step=epoch)
+
+                if metric_nDSC > best_metric_nDSC and epoch > 5:
                     best_metric_nDSC = metric_nDSC
                     best_metric_epoch_nDSC = epoch + 1
                     save_path = os.path.join(save_dir, f"best_nDSC_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for nDSC")
 
-                if metric_DSC > best_metric_DSC:# and epoch > 5:
+                if metric_DSC > best_metric_DSC and epoch > 5:
                     best_metric_DSC = metric_DSC
                     best_metric_epoch_DSC = epoch + 1
                     save_path = os.path.join(save_dir, f"best_DSC_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for DSC")
 
+                if metric_PQ > best_metric_PQ and epoch > 5:
+                    best_metric_PQ = metric_PQ
+                    best_metric_epoch_PQ = epoch + 1
+                    save_path = os.path.join(save_dir, f"best_PQ_{args.name}_seed{args.seed}.pth")
+                    torch.save(model.state_dict(), save_path)
+                    print("saved new best metric model for PQ")
+
+                if metric_DSC > best_metric_F1 and epoch > 5:
+                    best_metric_F1 = metric_F1
+                    best_metric_epoch_F1 = epoch + 1
+                    save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
+                    torch.save(model.state_dict(), save_path)
+                    print("saved new best metric model for F1")
+
                 print(f"current epoch: {epoch + 1} current mean normalized dice: {metric_nDSC:.4f}"
                       f"\nbest mean normalized dice: {best_metric_nDSC:.4f} at epoch: {best_metric_epoch_nDSC}"
                       f"\nbest mean dice: {best_metric_DSC:.4f} at epoch: {best_metric_epoch_DSC}"
+                      f"\nbest mean PQ: {best_metric_PQ:.4f} at epoch: {best_metric_epoch_PQ}"
+                      f"\nbest mean F1: {best_metric_F1:.4f} at epoch: {best_metric_epoch_F1}"
                       )
 
                 dice_metric.reset()
