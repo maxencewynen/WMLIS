@@ -170,7 +170,7 @@ class PanopticDeepLab3D(nn.Module):
             self.oc_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0],
                                           out_channels=4, last_layer=True)
 
-        self._init_params()
+        self._init_parameters()
 
     def forward(self, input):
         # Analysis Pathway
