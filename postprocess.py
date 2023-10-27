@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.ndimage import maximum_filter, generate_binary_structure, label, labeled_comprehension
+import argparse
 
 
 def remove_connected_components(segmentation, l_min=9):
@@ -53,7 +54,48 @@ def simple_instance_representation(heatmap, pool_size=3, threshold=0.1, k=200):
 
     return maxima, coordinates
 
-def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9):
+
+import numpy as np
+
+def compute_voting_image(offsets, binary_lesion_mask):
+    """
+    Compute a voting image based on the offsets matrix for voxels inside the binary lesion mask.
+
+    Args:
+        offsets: 4D array (3 x depth x height x width) containing the regression offsets.
+        binary_lesion_mask: 3D binary array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
+
+    Returns:
+        voting_image: 3D array containing the log of the number of votes received by each voxel inside the lesion mask.
+    """
+    depth, height, width = offsets.shape[1:]
+
+    # Create an empty voting matrix with the same shape as the offsets matrix
+    voting_matrix = np.zeros((depth, height, width))
+
+    # Iterate through all voxels in the offsets matrix
+    for z in range(depth):
+        for y in range(height):
+            for x in range(width):
+                # Check if the voxel is inside the lesion mask
+                if binary_lesion_mask[z, y, x] == 1:
+                    # Calculate the coordinates pointed to by the offsets
+                    dz, dy, dx = offsets[:, z, y, x]
+                    new_z, new_y, new_x = int(z + dz), int(y + dy), int(x + dx)
+
+                    # Check if the new coordinates are within bounds
+                    if 0 <= new_z < depth and 0 <= new_y < height and 0 <= new_x < width:
+                        # Update the voting matrix at the new coordinates
+                        voting_matrix[new_z, new_y, new_x] += 1
+
+    # Compute the log of the number of votes for each voxel inside the lesion mask
+    voting_image = np.log(voting_matrix + 1)  # Adding 1 to avoid log(0)
+
+    return voting_image
+
+
+
+def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9, compute_voting=False):
     """
     Assign instance IDs based on offset vectors and instance centers.
 
@@ -64,12 +106,18 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         semantic_mask: 3D array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
         min_lesion_size: Integer. All lesions with less or equal amount of voxels than min_lesion_size will 
                 be replaced by a voting of their closest neighbours or to background (0) if no other lesion is around.
+        compute_voting: Boolean. If True, the voting image will be computed and returned.
 
     Returns:
+        semantic_mask: 3D array where 'background' voxels are marked with 0 and 'lesion' voxels are marked with 1.
         instance_map: 3D array containing the instance IDs for each pixel.
+        (if compute_voting) voting_image: 3D array containing the log of the number of votes received by each voxel.
     """
     if offsets.shape[-1] == 3:
         offsets = offsets.transpose(3,0,1,2)
+
+    if compute_voting:
+        voting_image = compute_voting_image(offsets)
     
     instance_map = np.zeros(heatmap.shape)
 
@@ -138,11 +186,54 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
                         # changed_values[z, y, x] = 1
 
     # return instance_map, before_postprocessing, changed_values
+    if compute_voting:
+        return instance_map, semantic_mask, voting_image
     return instance_map, semantic_mask
 
-def postprocess(semantic_mask, heatmap, offsets):
+
+def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     semantic_mask = remove_connected_components(semantic_mask)
     instance_centers, coordinates = simple_instance_representation(heatmap)
+    if compute_voting:
+        semantic_mask, instance_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
+        return semantic_mask, instance_mask, voting_image
+
     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
-    
     return semantic_mask, instance_mask
+
+
+def compute_all_voting_image(path_pred):
+    import os
+    import nibabel as nib
+
+    for f in sorted(os.listdir(path_pred)):
+        if f.endswith('pred-offsets.nii.gz') or f.endswith('pred_offsets.nii.gz'):
+            offsets_img = nib.load(os.path.join(path_pred, f))
+            offsets  = offsets_img.get_fdata()
+
+            binary_segmentation = os.path.join(path_pred, f[:-len('pred-offsets.nii.gz')] + 'seg-binary.nii.gz')
+            if not os.path.exists(binary_segmentation):
+                binary_segmentation = os.path.join(path_pred, f[:-len('pred_offsets.nii.gz')] + 'seg_binary.nii.gz')
+            binary_segmentation = nib.load(binary_segmentation).get_fdata()
+
+            voting_image = compute_voting_image(offsets.transpose(3,0,1,2), binary_segmentation)
+            filename = f[:-len('pred-offsets.nii.gz')] + 'voting-image.nii.gz'
+            filepath = os.path.join(path_pred, filename)
+            nib.save(nib.Nifti1Image(voting_image, offsets_img.affine), filepath)
+            print(f"Saved {filename}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Get all command line arguments.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--compute_voting', action="store_true", default=False,
+                        help="Whether to compute the voting image")
+    parser.add_argument('--path_pred', help="Path to the predictions")
+
+    args = parser.parse_args()
+
+    if args.compute_voting:
+        compute_all_voting_image(path_pred=args.path_pred)
+    else:
+        print("Nothing asked, nothing done.")
+

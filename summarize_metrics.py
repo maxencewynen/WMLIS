@@ -4,16 +4,17 @@ import pandas as pd
 # Base directory
 base_dir = r'/dir/scratchL/mwynen/data/cusl_wml/predictions'
 
-def summarize_metrics(base_dir):
+def summarize_metrics(base_dir, test=False):
     # List of models (subfolders in "predictions")
     models = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
 
     # Dictionary to store mean metrics for each model
     model_mean_metrics = {}
+    suffix = "test" if test else "val"
 
     # Loop through each model to compute mean metrics
     for model in models:
-        file_path = os.path.join(base_dir, model, f"metrics_{model}_val.csv")
+        file_path = os.path.join(base_dir, model, f"metrics_{model}_{suffix}.csv")
         
         if os.path.exists(file_path):
             df = pd.read_csv(file_path)
@@ -40,8 +41,9 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Summarize segmentation metrics.")
 parser.add_argument("--preds_dir", required=True, help ="directory where to find the different models' predictions")
+parser.add_argument("--test", action="store_true", help="whether to use the _test suffix or not")
 
 args = parser.parse_args()
 
-summarize_metrics(args.preds_dir)
+summarize_metrics(args.preds_dir, args.test)
 
