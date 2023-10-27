@@ -170,6 +170,8 @@ class PanopticDeepLab3D(nn.Module):
             self.oc_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0],
                                           out_channels=4, last_layer=True)
 
+        self._init_params()
+
     def forward(self, input):
         # Analysis Pathway
         out, residual_level1 = self.a_block1(input)
@@ -198,6 +200,14 @@ class PanopticDeepLab3D(nn.Module):
             offsets_out = oc_decoder_out[:, 1:] * self.scale_offsets
 
         return semantic_out, center_prediction_out, offsets_out
+
+    def _init_parameters(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv3d):
+                torch.nn.init.normal_(m.weight, std=0.001)
+            elif isinstance(m, torch.nn.BatchNorm3d):
+                torch.nn.init.constant_(m.weight, 1)
+                torch.nn.init.constant_(m.bias, 0)
 
 
 def get_pretrained_model(model_path, in_channels, num_classes=2):
