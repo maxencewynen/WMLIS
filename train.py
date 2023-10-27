@@ -170,7 +170,9 @@ def main(args):
             model = get_pretrained_model(args.path_model, len(args.I))
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
-            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2)
+            model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2, separate_decoders=args.separate_decoders,
+                                  scale_offsets=args.offsets_scale).to(device)
+        
         
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
