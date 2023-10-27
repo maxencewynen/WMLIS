@@ -394,7 +394,6 @@ def main(args):
                         val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
                         val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
-                        breakpoint() 
                         for i in range(val_labels.shape[0]): # for every image in batch
                             sem_pred, inst_pred = postprocess(val_semantic_pred, 
                                                               val_center_pred.squeeze().cpu().numpy(), 
