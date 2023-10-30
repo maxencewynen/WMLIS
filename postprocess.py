@@ -128,9 +128,6 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
     if offsets.shape[-1] == 3:
         offsets = offsets.transpose(3,0,1,2)
 
-    if compute_voting:
-        voting_image = compute_voting_image(offsets, semantic_mask)
-    
     instance_map = np.zeros(heatmap.shape)
 
     # Get the 3D grids for coordinates
@@ -199,6 +196,7 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
 
     # return instance_map, before_postprocessing, changed_values
     if compute_voting:
+        voting_image = compute_voting_image(offsets, semantic_mask)
         return instance_map, semantic_mask, voting_image
     return instance_map, semantic_mask
 
@@ -207,7 +205,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     semantic_mask = remove_connected_components(semantic_mask)
     instance_centers, coordinates = simple_instance_representation(heatmap)
     if compute_voting:
-        semantic_mask, instance_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
+        instance_mask, semantic_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
         return semantic_mask, instance_mask, voting_image
 
     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
