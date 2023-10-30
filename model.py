@@ -140,20 +140,37 @@ class UpConv3DBlock(nn.Module):
 
 
 class PanopticDeepLab3D(nn.Module):
-    def __init__(self, in_channels, num_classes, level_channels=[64, 128, 256], bottleneck_channel=512, aspp=False, dilation_rates=[1,6,12]) -> None:
+    def __init__(self, in_channels, num_classes, level_channels=[64, 128, 256], bottleneck_channel=512, aspp=False,
+                 dilation_rates=[1,6,12], separate_decoders=False, scale_offsets=1) -> None:
         super(PanopticDeepLab3D, self).__init__()
-        
+
+        self.scale_offsets = scale_offsets
+
         # Analysis Path
         self.a_block1 = Conv3DBlock(in_channels=in_channels, out_channels=level_channels[0])
         self.a_block2 = Conv3DBlock(in_channels=level_channels[0], out_channels=level_channels[1])
         self.a_block3 = Conv3DBlock(in_channels=level_channels[1], out_channels=level_channels[2])
         self.bottleNeck = Conv3DBlock(in_channels=level_channels[2], out_channels=bottleneck_channel, bottleneck=True)
         self.aspp = ASPP3D(bottleneck_channel, bottleneck_channel, dilation_rates) if aspp else None
-        
+
         # Semantic Decoding Path
         self.s_block3 = UpConv3DBlock(in_channels=bottleneck_channel, res_channels=level_channels[2])
         self.s_block2 = UpConv3DBlock(in_channels=level_channels[2], res_channels=level_channels[1])
-        self.s_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=num_classes + 4, last_layer=True)
+
+        self.separate_decoders = separate_decoders
+        if not self.separate_decoders:
+            self.s_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0],
+                                          out_channels=num_classes + 4, last_layer=True)
+        else:
+            self.s_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0],
+                                          out_channels=num_classes, last_layer=True)
+
+            self.oc_block3 = UpConv3DBlock(in_channels=bottleneck_channel, res_channels=level_channels[2])
+            self.oc_block2 = UpConv3DBlock(in_channels=level_channels[2], res_channels=level_channels[1])
+            self.oc_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0],
+                                          out_channels=4, last_layer=True)
+
+        self._init_parameters()
 
     def forward(self, input):
         # Analysis Pathway
@@ -165,16 +182,32 @@ class PanopticDeepLab3D(nn.Module):
             out = self.aspp(out)
 
         # Semantic Decoding Pathway
-        decoder_out = self.s_block3(out, residual_level3)
-        decoder_out = self.s_block2(decoder_out, residual_level2)
-        decoder_out = self.s_block1(decoder_out, residual_level1)
+        sem_decoder_out = self.s_block3(out, residual_level3)
+        sem_decoder_out = self.s_block2(sem_decoder_out, residual_level2)
+        sem_decoder_out = self.s_block1(sem_decoder_out, residual_level1)
 
-        semantic_out = decoder_out[:,:2]
-        center_prediction_out = decoder_out[:,2:3]
-        offsets_out = decoder_out[:,3:]
+        if not self.separate_decoders:
+            semantic_out = sem_decoder_out[:,:2]
+            center_prediction_out = sem_decoder_out[:,2:3]
+            offsets_out = sem_decoder_out[:,3:] * self.scale_offsets
+        else:
+            oc_decoder_out = self.oc_block3(out, residual_level3)
+            oc_decoder_out = self.oc_block2(oc_decoder_out, residual_level2)
+            oc_decoder_out = self.oc_block1(oc_decoder_out, residual_level1)
+
+            semantic_out = sem_decoder_out
+            center_prediction_out = oc_decoder_out[:, :1]
+            offsets_out = oc_decoder_out[:, 1:] * self.scale_offsets
 
         return semantic_out, center_prediction_out, offsets_out
 
+    def _init_parameters(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv3d):
+                torch.nn.init.normal_(m.weight, std=0.001)
+            elif isinstance(m, torch.nn.BatchNorm3d):
+                torch.nn.init.constant_(m.weight, 1)
+                torch.nn.init.constant_(m.bias, 0)
 
 class UNet3D(nn.Module):
     def __init__(self, in_channels, num_classes, level_channels=[64, 128, 256], bottleneck_channel=512)-> None:
