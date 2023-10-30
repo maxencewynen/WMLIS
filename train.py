@@ -18,7 +18,7 @@ from metrics import *
 from model import *
 import time
 from config import setup_config
-from postprocess import postprocess
+from postprocess import *
 from tqdm import tqdm
 
 setup_config()
