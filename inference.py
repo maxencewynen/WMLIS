@@ -8,7 +8,7 @@ from model import *
 from monai.data import write_nifti
 import numpy as np
 from data_load import get_val_dataloader
-from postprocess import postprocess
+from postprocess import postprocess, postprocess_binary_segmentation, remove_connected_components
 from metrics import dice_metric, dice_norm_metric
 import nibabel as nib
 from tqdm import tqdm
@@ -37,6 +37,8 @@ parser.add_argument('--threshold', type=float, default=0.5, help='Probability th
 
 parser.add_argument('--compute_dice', action="store_true", default=False, help="Whether to compute the dice over all the dataset after having predicted it")
 parser.add_argument('--compute_voting', action="store_true", default=False, help="Whether to compute the voting image")
+parser.add_argument('--semantic_model', action="store_true", default=False, help="Whether the model to be loaded is a semantic model or not")
+parser.add_argument('--separate_decoders', action="store_true", default=False, help="Whether the model has separate decoders or not")
 
 
 def get_default_device():
@@ -49,6 +51,7 @@ def get_default_device():
 
 
 def main(args):
+    assert (args.semantic_model and not args.compute_voting) or not args.semantic_model, "cannot compute votings if semantic model" 
     os.makedirs(args.path_pred, exist_ok=True)
     device = get_default_device()
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -58,14 +61,18 @@ def main(args):
                                     num_workers=args.num_workers,
                                     I=args.sequences,
                                     test=args.test,
-                                    apply_mask=args.apply_mask)
+                                    apply_mask=args.apply_mask,
+                                    cache_rate=0)
 
     ''' Load trained model  '''
     in_channels = len(args.sequences)
     path_pred = os.path.join(args.path_pred, os.path.basename(os.path.dirname(args.path_model)))
     os.makedirs(path_pred, exist_ok=True)
-
-    model = PanopticDeepLab3D(in_channels, num_classes=2)
+    
+    if not args.semantic_model:
+        model = PanopticDeepLab3D(in_channels, num_classes=2, separate_decoders=args.separate_decoders)
+    else:
+        model = UNet3D(in_channels, num_classes=2)
     model.load_state_dict(torch.load(args.path_model))
     model.to(device)
     model.eval()
@@ -87,13 +94,19 @@ def main(args):
             # get ensemble predictions
             all_outputs = []
             outputs = sliding_window_inference(inputs, roi_size, sw_batch_size, model, mode='gaussian', overlap=0.5)
-            semantic_pred, heatmap_pred, offsets_pred = outputs
-            semantic_pred = act(semantic_pred).cpu().numpy()
-            
-            semantic_pred = np.squeeze(semantic_pred[0, 1])
-            heatmap_pred = np.squeeze(heatmap_pred.cpu().numpy())
-            offsets_pred = np.squeeze(offsets_pred.cpu().numpy())
+            if not args.semantic_model:
+                semantic_pred, heatmap_pred, offsets_pred = outputs
+                semantic_pred = act(semantic_pred).cpu().numpy()
+                semantic_pred = np.squeeze(semantic_pred[0, 1])
+                heatmap_pred = np.squeeze(heatmap_pred.cpu().numpy())
+                offsets_pred = np.squeeze(offsets_pred.cpu().numpy())
 
+            else:
+                semantic_pred = outputs
+            
+                semantic_pred = act(semantic_pred).cpu().numpy()
+                semantic_pred = np.squeeze(semantic_pred[0, 1])
+            
             # get image metadata
             meta_dict = args.sequences[0] + "_meta_dict"
             original_affine = batch_data[meta_dict]['original_affine'][0]
@@ -117,8 +130,11 @@ def main(args):
             seg = np.squeeze(seg)
             if args.compute_voting:
                 seg, instances_pred, voting_image = postprocess(seg, heatmap_pred, offsets_pred, compute_voting=args.compute_voting)
-            else:
+            elif not args.semantic_model:
                 seg, instances_pred = postprocess(seg, heatmap_pred, offsets_pred)
+            else:
+                seg = remove_connected_components(seg)
+                instances_pred = postprocess_binary_segmentation(seg)
             
 
             filename = filename_or_obj[:14] + "_seg-binary.nii.gz"
@@ -129,21 +145,23 @@ def main(args):
                         mode='nearest',
                         output_spatial_shape=spatial_shape)
             
-            # obtain and save predicted center heatmap
-            filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
-            filepath = os.path.join(path_pred, filename)
-            write_nifti(heatmap_pred, filepath,
-                        affine=original_affine,
-                        target_affine=affine,
-                        output_spatial_shape=spatial_shape)
+            if not args.semantic_model:
+                # obtain and save predicted center heatmap
+                filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(heatmap_pred, filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
            
-            # obtain and save predicted offsets
-            filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
-            filepath = os.path.join(path_pred, filename)
-            write_nifti(offsets_pred.transpose(1,2,3,0), filepath,
-                        affine=original_affine,
-                        target_affine=affine,
-                        output_spatial_shape=spatial_shape)
+            if not args.semantic_model:
+                # obtain and save predicted offsets
+                filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(offsets_pred.transpose(1,2,3,0), filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
             
             # obtain and save predicted offsets
             filename = filename_or_obj[:14] + "_pred-instances.nii.gz"

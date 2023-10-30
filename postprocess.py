@@ -128,7 +128,7 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         offsets = offsets.transpose(3,0,1,2)
 
     if compute_voting:
-        voting_image = compute_voting_image(offsets)
+        voting_image = compute_voting_image(offsets, semantic_mask)
     
     instance_map = np.zeros(heatmap.shape)
 
