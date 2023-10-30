@@ -161,29 +161,29 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
         RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
         RandScaleIntensityd(keys=non_quantitative_images, factors=0.1, prob=1.0),
+        LesionOffsetTransformd(keys="instance_mask"),
     ]
     if apply_mask:
         transform_list += [MaskIntensityd(keys=I + masks, mask_key=apply_mask)]
 
     transform_list += [
-        LesionOffsetTransformd(keys="instance_mask"),
-        RandCropByPosNegLabeld(keys=I + masks + other_keys,
+        RandCropByPosNegLabeld(keys=I + other_keys,
                                label_key="label", image_key=I[0],
                                spatial_size=(128, 128, 128), num_samples=32,
                                pos=4, neg=1),
-        RandSpatialCropd(keys=I + masks + other_keys,
+        RandSpatialCropd(keys=I + other_keys,
                          roi_size=(96, 96, 96),
                          random_center=True, random_size=False),
-        RandFlipd(keys=I + masks + other_keys, prob=0.5, spatial_axis=(0, 1, 2)),
-        RandRotate90d(keys=I + masks + other_keys, prob=0.5, spatial_axes=(0, 1)),
-        RandRotate90d(keys=I + masks + other_keys, prob=0.5, spatial_axes=(1, 2)),
-        RandRotate90d(keys=I + masks + other_keys, prob=0.5, spatial_axes=(0, 2)),
+        RandFlipd(keys=I + other_keys, prob=0.5, spatial_axis=(0, 1, 2)),
+        RandRotate90d(keys=I + other_keys, prob=0.5, spatial_axes=(0, 1)),
+        RandRotate90d(keys=I + other_keys, prob=0.5, spatial_axes=(1, 2)),
+        RandRotate90d(keys=I + other_keys, prob=0.5, spatial_axes=(0, 2)),
         RandAffined(keys=I + ["center_heatmap", "offsets"] + ["label"],
                     mode=tuple(['bilinear'] * (len(I) + 2)) + tuple(['nearest']),
                     prob=1.0, spatial_size=(96, 96, 96),
                     rotate_range=(np.pi / 12, np.pi / 12, np.pi / 12),
                     scale_range=(0.1, 0.1, 0.1), padding_mode='border'),
-        ToTensord(keys=I + masks + other_keys),
+        ToTensord(keys=I + other_keys),
         ConcatItemsd(keys=I, name="image", dim=0)
     ]
     # transform.set_random_state(seed=seed)
