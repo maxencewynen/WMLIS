@@ -8,35 +8,42 @@ from model import *
 from monai.data import write_nifti
 import numpy as np
 from data_load import get_val_dataloader
-from postprocess import postprocess
+from postprocess import postprocess, postprocess_binary_segmentation, remove_connected_components
 from metrics import dice_metric, dice_norm_metric
 import nibabel as nib
 from tqdm import tqdm
 
-parser = argparse.ArgumentParser(description='Get all command line arguments.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser = argparse.ArgumentParser(description='Get all command line arguments.',
+                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 # save options
 parser.add_argument('--path_pred', type=str, required=True,
                     help='Specify the path to the directory to store predictions')
 # model
-#parser.add_argument('--num_models', type=int, default=3,
+# parser.add_argument('--num_models', type=int, default=3,
 #                    help='Number of models in ensemble')
 parser.add_argument('--path_model', type=str, default='',
                     help='Specify the path to the trained model')
 # data
 parser.add_argument('--path_data', type=str, required=True, default='~/data/bxl',
                     help='Specify the path to the data directory where img/ labels/ (and bm/) directories can be found')
-parser.add_argument('--test', action="store_true", default=False, help="whether to use the test set or not. (default to validation set)")
+parser.add_argument('--test', action="store_true", default=False,
+                    help="whether to use the test set or not. (default to validation set)")
 parser.add_argument('--sequences', type=str, nargs='+', required=True,
                     help='input sequences to the model (order is important)')
 parser.add_argument('--apply_mask', type=str, default=None, help="Name of the mask to apply")
-                    
+
 # parallel computation
 parser.add_argument('--num_workers', type=int, default=10, help='Number of workers to preprocess images')
 # hyperparameters
 parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
 
-parser.add_argument('--compute_dice', action="store_true", default=False, help="Whether to compute the dice over all the dataset after having predicted it")
+parser.add_argument('--compute_dice', action="store_true", default=False,
+                    help="Whether to compute the dice over all the dataset after having predicted it")
 parser.add_argument('--compute_voting', action="store_true", default=False, help="Whether to compute the voting image")
+parser.add_argument('--semantic_model', action="store_true", default=False,
+                    help="Whether the model to be loaded is a semantic model or not")
+parser.add_argument('--separate_decoders', action="store_true", default=False,
+                    help="Whether the model has separate decoders or not")
 
 
 def get_default_device():
@@ -49,6 +56,8 @@ def get_default_device():
 
 
 def main(args):
+    assert (
+                       args.semantic_model and not args.compute_voting) or not args.semantic_model, "cannot compute votings if semantic model"
     os.makedirs(args.path_pred, exist_ok=True)
     device = get_default_device()
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -58,14 +67,18 @@ def main(args):
                                     num_workers=args.num_workers,
                                     I=args.sequences,
                                     test=args.test,
-                                    apply_mask=args.apply_mask)
+                                    apply_mask=args.apply_mask,
+                                    cache_rate=0)
 
     ''' Load trained model  '''
     in_channels = len(args.sequences)
     path_pred = os.path.join(args.path_pred, os.path.basename(os.path.dirname(args.path_model)))
     os.makedirs(path_pred, exist_ok=True)
 
-    model = PanopticDeepLab3D(in_channels, num_classes=2)
+    if not args.semantic_model:
+        model = PanopticDeepLab3D(in_channels, num_classes=2, separate_decoders=args.separate_decoders)
+    else:
+        model = UNet3D(in_channels, num_classes=2)
     model.load_state_dict(torch.load(args.path_model))
     model.to(device)
     model.eval()
@@ -82,17 +95,23 @@ def main(args):
         n_subjects = 0
         for count, batch_data in tqdm(enumerate(val_loader)):
             inputs = batch_data["image"].to(device)
-            #foreground_mask = batch_data["brain_mask"].numpy()[0, 0]
+            # foreground_mask = batch_data["brain_mask"].numpy()[0, 0]
 
             # get ensemble predictions
             all_outputs = []
             outputs = sliding_window_inference(inputs, roi_size, sw_batch_size, model, mode='gaussian', overlap=0.5)
-            semantic_pred, heatmap_pred, offsets_pred = outputs
-            semantic_pred = act(semantic_pred).cpu().numpy()
-            
-            semantic_pred = np.squeeze(semantic_pred[0, 1])
-            heatmap_pred = np.squeeze(heatmap_pred.cpu().numpy())
-            offsets_pred = np.squeeze(offsets_pred.cpu().numpy())
+            if not args.semantic_model:
+                semantic_pred, heatmap_pred, offsets_pred = outputs
+                semantic_pred = act(semantic_pred).cpu().numpy()
+                semantic_pred = np.squeeze(semantic_pred[0, 1])
+                heatmap_pred = np.squeeze(heatmap_pred.cpu().numpy())
+                offsets_pred = np.squeeze(offsets_pred.cpu().numpy())
+
+            else:
+                semantic_pred = outputs
+
+                semantic_pred = act(semantic_pred).cpu().numpy()
+                semantic_pred = np.squeeze(semantic_pred[0, 1])
 
             # get image metadata
             meta_dict = args.sequences[0] + "_meta_dict"
@@ -116,10 +135,13 @@ def main(args):
             seg[seg < th] = 0
             seg = np.squeeze(seg)
             if args.compute_voting:
-                seg, instances_pred, voting_image = postprocess(seg, heatmap_pred, offsets_pred, compute_voting=args.compute_voting)
-            else:
+                seg, instances_pred, voting_image = postprocess(seg, heatmap_pred, offsets_pred,
+                                                                compute_voting=args.compute_voting)
+            elif not args.semantic_model:
                 seg, instances_pred = postprocess(seg, heatmap_pred, offsets_pred)
-            
+            else:
+                seg = remove_connected_components(seg)
+                instances_pred = postprocess_binary_segmentation(seg)
 
             filename = filename_or_obj[:14] + "_seg-binary.nii.gz"
             filepath = os.path.join(path_pred, filename)
@@ -128,23 +150,25 @@ def main(args):
                         target_affine=affine,
                         mode='nearest',
                         output_spatial_shape=spatial_shape)
-            
-            # obtain and save predicted center heatmap
-            filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
-            filepath = os.path.join(path_pred, filename)
-            write_nifti(heatmap_pred, filepath,
-                        affine=original_affine,
-                        target_affine=affine,
-                        output_spatial_shape=spatial_shape)
-           
-            # obtain and save predicted offsets
-            filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
-            filepath = os.path.join(path_pred, filename)
-            write_nifti(offsets_pred.transpose(1,2,3,0), filepath,
-                        affine=original_affine,
-                        target_affine=affine,
-                        output_spatial_shape=spatial_shape)
-            
+
+            if not args.semantic_model:
+                # obtain and save predicted center heatmap
+                filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(heatmap_pred, filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
+
+            if not args.semantic_model:
+                # obtain and save predicted offsets
+                filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(offsets_pred.transpose(1, 2, 3, 0), filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
+
             # obtain and save predicted offsets
             filename = filename_or_obj[:14] + "_pred-instances.nii.gz"
             filepath = os.path.join(path_pred, filename)
@@ -160,33 +184,26 @@ def main(args):
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
-            
+
             if args.compute_dice:
                 if args.test:
-                    gt = nib.load(os.path.join(args.path_data, 'test', 'labels', filename_or_obj[:14] + "_mask-classes.nii.gz")).get_fdata()
+                    gt = nib.load(os.path.join(args.path_data, 'test', 'labels',
+                                               filename_or_obj[:14] + "_mask-classes.nii.gz")).get_fdata()
                 else:
                     gt = np.squeeze(batch_data["label"].cpu().numpy())
-                
+
                 dsc = dice_metric(gt, seg)
                 ndsc = dice_norm_metric(gt, seg)
-                print(filename_or_obj[:14], "DSC:", round(dsc,3), " /  nDSC:", round(ndsc,3))
+                print(filename_or_obj[:14], "DSC:", round(dsc, 3), " /  nDSC:", round(ndsc, 3))
                 avg_dsc += dsc
                 avg_ndsc += ndsc
-            n_subjects+=1
+            n_subjects += 1
     avg_dsc /= n_subjects
     avg_ndsc /= n_subjects
     print(f"Average Dice score for this subset is {avg_dsc}")
     print(f"Average normalizd Dice score for this subset is {avg_ndsc}")
-    
-    # path_pred = os.path.join(args.path_pred, os.path.basename(os.path.dirname(args.path_model)))
-    # if args.compute_dice:
-    #     gt_files = glob.glob(os.path.join(args.path_data, 'test', 'labels', '*mask-classes.nii.gz')) if args.test \
-    #             else glob.glob(os.path.join(args.path_data, 'val', 'labels', '*mask-classes.nii.gz'))
-    #     pred_files = glob.glob(os.path.join(path_pred, '*seg_binary.nii.gz'))
-    #     compute_dice(sorted(gt_files), sorted(pred_files))
 
 
-# %%
 if __name__ == "__main__":
     args = parser.parse_args()
     main(args)

@@ -381,7 +381,7 @@ def main(args):
 
                 metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp = 0, 0, 0, 0, 0, 0
 
-                if metric_DSC > 0.5:
+                if metric_DSC > 0.6:
                     pqs = []
                     fbetas = []
                     ltprs = []

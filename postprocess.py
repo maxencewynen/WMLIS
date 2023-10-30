@@ -3,6 +3,19 @@ from scipy.ndimage import maximum_filter, generate_binary_structure, label, labe
 import argparse
 
 
+def postprocess_binary_segmentation(binary_segmentation, threshold=0.5, min_lesion_size=9):
+    # Threshold the image
+    binary_data = np.where(binary_segmentation >= threshold, 1, 0).astype(np.uint8)
+
+    # Remove objects smaller than 9 voxels
+    binary_data = remove_connected_components(binary_data, l_min=min_lesion_size)
+
+    # Find connected components larger than 9 voxels
+    labeled_array, num_features = label(binary_data)
+
+    return labeled_array
+
+
 def remove_connected_components(segmentation, l_min=9):
     """
     Remove all lesions with less or equal amount of voxels than `l_min` from a
@@ -94,7 +107,6 @@ def compute_voting_image(offsets, binary_lesion_mask):
     return voting_image
 
 
-
 def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, min_lesion_size=9, compute_voting=False):
     """
     Assign instance IDs based on offset vectors and instance centers.
@@ -117,7 +129,7 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
         offsets = offsets.transpose(3,0,1,2)
 
     if compute_voting:
-        voting_image = compute_voting_image(offsets)
+        voting_image = compute_voting_image(offsets, semantic_mask)
     
     instance_map = np.zeros(heatmap.shape)
 
