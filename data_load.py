@@ -12,7 +12,7 @@ from monai.transforms import (
     Spacingd, ToTensord, NormalizeIntensityd, RandFlipd,
     RandRotate90d, RandShiftIntensityd, RandAffined, RandSpatialCropd,
     RandScaleIntensityd, RandSpatialCropSamplesd, ConcatItemsd, Lambdad,
-    MaskIntensityd)
+    MaskIntensityd, CastToTyped)
 from scipy import ndimage
 import torch
 from typing import Callable
@@ -157,6 +157,7 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
     transform_list = [
         LoadImaged(keys=I + masks),
         AddChanneld(keys=I + masks),
+        CastToTyped(keys=masks, dtype=np.int16),
         # Lambdad(keys=non_label_masks, func=lambda x: x.astype(np.uint), allow_missing_keys=True),
         NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
         RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
@@ -167,7 +168,6 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         transform_list += [MaskIntensityd(keys=I + masks, mask_key=apply_mask)]
 
     transform_list += [
-            LesionOffsetTransformd(keys="instance_mask"),
             RandCropByPosNegLabeld(keys=I+other_keys,
                                    label_key="label", image_key=I[0],
                                    spatial_size=(128, 128, 128), num_samples=32,
@@ -207,6 +207,7 @@ def get_val_transforms(I=['FLAIR'], bm=False, apply_mask=None):
     transforms = [
         LoadImaged(keys=I + other_keys),
         AddChanneld(keys=I + other_keys),
+        CastToTyped(keys="instance_mask", dtype=np.int16),
         # Lambdad(keys=["label"], func=lambda x: (x>0).astype(int) ),
     ]
     transforms = transforms + [Lambdad(keys=["brain_mask"], func=lambda x: x.astype(np.uint8))] if bm else transforms
