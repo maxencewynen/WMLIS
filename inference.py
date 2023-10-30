@@ -135,10 +135,10 @@ def main(args):
             seg[seg < th] = 0
             seg = np.squeeze(seg)
             if args.compute_voting:
-                seg, instances_pred, voting_image = postprocess(seg, heatmap_pred, offsets_pred,
-                                                                compute_voting=args.compute_voting)
+                seg, instances_pred, instance_centers, voting_image = postprocess(seg, heatmap_pred, offsets_pred,
+                                                                                  compute_voting=args.compute_voting)
             elif not args.semantic_model:
-                seg, instances_pred = postprocess(seg, heatmap_pred, offsets_pred)
+                seg, instances_pred, instance_centers = postprocess(seg, heatmap_pred, offsets_pred)
             else:
                 seg = remove_connected_components(seg)
                 instances_pred = postprocess_binary_segmentation(seg)
@@ -173,6 +173,14 @@ def main(args):
             filename = filename_or_obj[:14] + "_pred-instances.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(instances_pred, filepath,
+                        affine=original_affine,
+                        target_affine=affine,
+                        output_spatial_shape=spatial_shape)
+
+            # obtain and save predicted offsets
+            filename = filename_or_obj[:14] + "_pred-centers.nii.gz"
+            filepath = os.path.join(path_pred, filename)
+            write_nifti(instance_centers, filepath,
                         affine=original_affine,
                         target_affine=affine,
                         output_spatial_shape=spatial_shape)

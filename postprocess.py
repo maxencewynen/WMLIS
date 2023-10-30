@@ -206,10 +206,10 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     instance_centers, coordinates = simple_instance_representation(heatmap)
     if compute_voting:
         instance_mask, semantic_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
-        return semantic_mask, instance_mask, voting_image
+        return semantic_mask, instance_mask, instance_centers, voting_image
 
     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
-    return semantic_mask, instance_mask
+    return semantic_mask, instance_mask, instance_centers
 
 
 def compute_all_voting_image(path_pred):
