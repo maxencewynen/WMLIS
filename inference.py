@@ -8,7 +8,7 @@ from model import *
 from monai.data import write_nifti
 import numpy as np
 from data_load import get_val_dataloader
-from postprocess import postprocess, postprocess_binary_segmentation, remove_connected_components
+from postprocess_pdl import postprocess, postprocess_binary_segmentation, remove_connected_components
 from metrics import dice_metric, dice_norm_metric
 import nibabel as nib
 from tqdm import tqdm
@@ -104,8 +104,6 @@ def main(args):
                 semantic_pred, heatmap_pred, offsets_pred = outputs
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
-                heatmap_pred = np.squeeze(heatmap_pred.cpu().numpy())
-                offsets_pred = np.squeeze(offsets_pred.cpu().numpy())
 
             else:
                 semantic_pred = outputs

@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.ndimage import maximum_filter, generate_binary_structure, label, labeled_comprehension
 import argparse
+import torch
+import torch.nn.functional as F
 
 
 def postprocess_binary_segmentation(binary_segmentation, threshold=0.5, min_lesion_size=9):
@@ -40,35 +42,33 @@ def remove_connected_components(segmentation, l_min=9):
                  current_voxels[:, 2]] = 1
     return seg2
 
-def simple_instance_representation(heatmap, pool_size=3, threshold=0.1, k=200):
-    """
-    Apply NMS on the heatmap prediction to find instance centers.
+# def simple_instance_representation(heatmap, pool_size=3, threshold=0.1, k=200):
+#     """
+#     Apply NMS on the heatmap prediction to find instance centers.
+#
+#     Args:
+#         heatmap: 3D array containing the instance center heatmap prediction.
+#         pool_size: Integer, the size of the max pooling window.
+#         threshold: Float, hard threshold to filter out low confidence predictions.
+#         k: Integer, only keep top-k highest confidence scores.
+#
+#     Returns:
+#         instance_centers: List of tuples containing the (z, y, x) coordinates of instance centers.
+#     """
+#     # Apply max pooling
+#     pooled = maximum_filter(heatmap, size=(pool_size, pool_size, pool_size))
+#
+#     # Mask of the local maxima
+#     maxima = (heatmap == pooled)
+#
+#     # Apply threshold and get coordinates of the remaining maxima
+#     coordinates = np.argwhere(maxima & (heatmap >= threshold))
+#
+#     # Sort coordinates based on heatmap values and keep only top-k
+#     coordinates = sorted(coordinates, key=lambda coord: heatmap[tuple(coord)], reverse=True)[:k]
+#
+#     return maxima, coordinates
 
-    Args:
-        heatmap: 3D array containing the instance center heatmap prediction.
-        pool_size: Integer, the size of the max pooling window.
-        threshold: Float, hard threshold to filter out low confidence predictions.
-        k: Integer, only keep top-k highest confidence scores.
-
-    Returns:
-        instance_centers: List of tuples containing the (z, y, x) coordinates of instance centers.
-    """
-    # Apply max pooling
-    pooled = maximum_filter(heatmap, size=(pool_size, pool_size, pool_size))
-    
-    # Mask of the local maxima
-    maxima = (heatmap == pooled)
-    
-    # Apply threshold and get coordinates of the remaining maxima
-    coordinates = np.argwhere(maxima & (heatmap >= threshold))
-    
-    # Sort coordinates based on heatmap values and keep only top-k
-    coordinates = sorted(coordinates, key=lambda coord: heatmap[tuple(coord)], reverse=True)[:k]
-
-    return maxima, coordinates
-
-
-import numpy as np
 
 def compute_voting_image(offsets, binary_lesion_mask):
     """
@@ -201,15 +201,147 @@ def simple_instance_grouping(heatmap, offsets, instance_centers, semantic_mask, 
     return instance_map, semantic_mask
 
 
-def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
-    semantic_mask = remove_connected_components(semantic_mask)
-    instance_centers, coordinates = simple_instance_representation(heatmap)
-    if compute_voting:
-        instance_mask, semantic_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
-        return semantic_mask, instance_mask, instance_centers, voting_image
+# def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
+#     semantic_mask = remove_connected_components(semantic_mask)
+#     instance_centers, coordinates = simple_instance_representation(heatmap)
+#     if compute_voting:
+#         instance_mask, semantic_mask, voting_image = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask, compute_voting=compute_voting)
+#         return semantic_mask, instance_mask, instance_centers, voting_image
+#
+#     instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
+#     return semantic_mask, instance_mask, instance_centers
 
-    instance_mask, semantic_mask = simple_instance_grouping(heatmap, offsets, coordinates, semantic_mask)
-    return semantic_mask, instance_mask, instance_centers
+def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
+    """
+    from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
+    Find the center points from the center heatmap.
+    Arguments:
+        ctr_hmp: A Tensor of shape [N, 1, H, W, D] of raw center heatmap output, where N is the batch size,
+            for consistent, we only support N=1.
+        threshold: A Float, threshold applied to center heatmap score.
+        nms_kernel: An Integer, NMS max pooling kernel size.
+        top_k: An Integer, top k centers to keep.
+    Returns:
+        A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (z, y, x).
+    """
+    if ctr_hmp.size(0) != 1:
+        raise ValueError('Only supports inference for batch size = 1')
+
+    # thresholding, setting values below threshold to -1
+    ctr_hmp = F.threshold(ctr_hmp, threshold, -1)
+
+    # NMS
+    nms_padding = (nms_kernel - 1) // 2
+    ctr_hmp_max_pooled = F.max_pool3d(ctr_hmp, kernel_size=nms_kernel, stride=1, padding=nms_padding)
+    ctr_hmp[ctr_hmp != ctr_hmp_max_pooled] = -1
+
+    # squeeze first two dimensions
+    ctr_hmp = ctr_hmp.squeeze()
+    assert len(ctr_hmp.size()) == 3, 'Something is wrong with center heatmap dimension.'
+
+    # find non-zero elements
+    ctr_all = torch.nonzero(ctr_hmp > 0)
+    if top_k is None:
+        return ctr_all
+    elif ctr_all.size(0) < top_k:
+        return ctr_all
+    else:
+        # find top k centers.
+        top_k_scores, _ = torch.topk(torch.flatten(ctr_hmp), top_k)
+        return torch.nonzero(ctr_hmp > top_k_scores[-1])
+
+
+def group_pixels(ctr, offsets, compute_voting=False):
+    """
+    from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
+    Gives each pixel in the image an instance id.
+    Arguments:
+        ctr: A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (z, y, x).
+        offsets: A Tensor of shape [N, 3, H, W, D] of raw offset output, where N is the batch size,
+            for consistent, we only support N=1. The order of second dim is (offset_z, offset_y, offset_x).
+    Returns:
+        A Tensor of shape [1, H, W, D] (to be gathered by distributed data parallel).
+    """
+    if offsets.size(0) != 1:
+        raise ValueError('Only supports inference for batch size = 1')
+
+    offsets = offsets.squeeze(0)
+    depth, height, width = offsets.size()[1:]
+
+    # generates a 3D coordinate map, where each location is the coordinate of that loc
+    z_coord = torch.arange(depth, dtype=offsets.dtype, device=offsets.device).unsqueeze(1).unsqueeze(2).repeat(1, height, width).unsqueeze(0)
+    y_coord = torch.arange(height, dtype=offsets.dtype, device=offsets.device).unsqueeze(0).unsqueeze(2).repeat(depth, 1, width).unsqueeze(0)
+    x_coord = torch.arange(width, dtype=offsets.dtype, device=offsets.device).unsqueeze(0).unsqueeze(1).repeat(depth, height, 1).unsqueeze(0)
+
+    coord = torch.cat((z_coord, y_coord, x_coord), dim=0)
+
+    ctr_loc = coord + offsets
+    if compute_voting:
+        votes = torch.round(ctr_loc).long()
+        votes[2, :] = torch.clamp(votes[2, :], 0, width - 1)
+        votes[1, :] = torch.clamp(votes[1, :], 0, height - 1)
+        votes[0, :] = torch.clamp(votes[0, :], 0, depth - 1)
+
+        flat_votes = votes.view(3, -1)
+        # Calculate unique coordinate values and their counts
+        unique_coords, counts = torch.unique(flat_votes, dim=1, return_counts=True)
+        # Create a result tensor with zeros
+        votes = torch.zeros(1, votes.shape[1], votes.shape[2], votes.shape[3], dtype=torch.long, device=votes.device)
+        # Use advanced indexing to set counts in the result tensor
+        votes[0, unique_coords[0], unique_coords[1], unique_coords[2]] = counts
+        votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
+        votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
+        votes*=100
+
+    ctr_loc = ctr_loc.view(3, depth * height * width).transpose(1, 0)
+
+    # ctr: [K, 3] -> [K, 1, 3]
+    # ctr_loc = [D*H*W, 3] -> [1, D*H*W, 3]
+    ctr = ctr.unsqueeze(1)
+    ctr_loc = ctr_loc.unsqueeze(0)
+
+    # Compute the Euclidean distance in 3D space
+    distance = torch.norm(ctr - ctr_loc, dim=-1)
+
+    # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
+    instance_id = torch.argmin(distance, dim=0).view(1, depth, height, width) + 1
+    if compute_voting:
+        return instance_id, votes
+    return instance_id
+
+
+def postprocess(semantic_mask, heatmap, offsets, threshold=0.5, compute_voting=False):
+    """
+    Postprocesses the semantic mask, center heatmap and the offsets.
+    Arguments:
+        semantic_mask: a binary numpy.ndarray of shape [W, H, D].
+        heatmap: A Tensor of shape [N, 1, W, H, D] of raw center heatmap output
+        offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output
+        threshold: A Float, threshold applied to the semantic mask if to be applied.
+        compute_voting: A Boolean, whether to compute the votes image.
+    Returns:
+        A tuple of:
+            semantic_mask: A binary numpy.ndarray of shape [W, H, D].
+            instance_mask: A numpy.ndarray of shape [W, H, D].
+            instance_centers: A numpy.ndarray of shape [W, H, D].
+            (Optional: voting_image: A numpy.ndarray of shape [W, H, D].)
+    """
+    assert len(np.unique(semantic_mask)) == 2, "Semantic mask should be binary"
+    semantic_mask = remove_connected_components(semantic_mask)
+
+    instance_centers = find_instance_center(heatmap)
+
+    instance_ids = group_pixels(instance_centers, offsets, compute_voting=compute_voting)
+    if compute_voting:
+        instance_ids, voting_image = instance_ids
+    else:
+        voting_image = None
+
+    instance_mask = np.transpose(np.squeeze(instance_ids.cpu().numpy().astype(np.int32)), (2,0,1)) * semantic_mask
+
+    ret = (instance_mask, np.squeeze(instance_centers.cpu().numpy().astype(np.uint8)))
+    ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()
+    return (semantic_mask,) + tuple(np.transpose(x, (2, 0, 1)) for x in ret)
 
 
 def compute_all_voting_image(path_pred):

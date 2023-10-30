@@ -349,7 +349,7 @@ def main(args):
             with torch.no_grad():
                 nDSC_list = []
                 for val_data in val_loader:
-                    val_inputs, val_labels, val_heatmaps, val_offsets_pred, val_bms = (
+                    val_inputs, val_labels, val_heatmaps, val_offsets, val_bms = (
                         val_data["image"].to(device),
                         val_data["label"].to(device),
                         val_data["center_heatmap"].to(device),
@@ -357,7 +357,7 @@ def main(args):
                         val_data["brain_mask"].squeeze().cpu().numpy()
                     )
 
-                    val_semantic_pred, val_center_pred, val_offsets = inference(val_inputs, model)
+                    val_semantic_pred, _, _ = inference(val_inputs, model)
 
                     for_dice_outputs = [post_trans(i) for i in decollate_batch(val_semantic_pred)]
 
@@ -372,7 +372,7 @@ def main(args):
                     nDSC_list.append(nDSC)
 
                 torch.cuda.empty_cache()
-                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets_pred, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 metric_nDSC = np.mean(nDSC_list)
                 metric_DSC = dice_metric.aggregate().item()
                 wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)
@@ -392,7 +392,7 @@ def main(args):
                     print(f"Computing instance segmentation metrics! (DSC = {metric_DSC:.4f})")
                     for val_data in tqdm(val_loader):
 
-                        val_inputs, val_instances, val_labels, val_heatmaps, val_offsets_pred, val_bms = (
+                        val_inputs, val_instances, val_labels, val_heatmaps, val_offsets, val_bms = (
                             val_data["image"].to(device),
                             val_data["instance_mask"].to(device),
                             val_data["label"].to(device),
@@ -401,7 +401,7 @@ def main(args):
                             val_data["brain_mask"].squeeze().cpu().numpy()
                         )
 
-                        val_semantic_pred, val_center_pred, val_offsets = inference(val_inputs, model)
+                        val_semantic_pred, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 
                         val_semantic_pred = act(val_semantic_pred)[:, 1]
                         val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
@@ -409,8 +409,8 @@ def main(args):
                         val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
                         for i in range(val_labels.shape[0]):  # for every image in batch
                             sem_pred, inst_pred = postprocess(val_semantic_pred,
-                                                              val_center_pred.squeeze().cpu().numpy(),
-                                                              val_offsets.squeeze().cpu().numpy())
+                                                              val_center_pred,
+                                                              val_offsets_pred)
                             matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
                                                                                            val_instances.squeeze().cpu().numpy())
                             pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
