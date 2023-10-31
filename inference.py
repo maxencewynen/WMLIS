@@ -8,7 +8,7 @@ from model import *
 from monai.data import write_nifti
 import numpy as np
 from data_load import get_val_dataloader
-from postprocess_pdl import postprocess, postprocess_binary_segmentation, remove_connected_components
+from postprocess import postprocess, postprocess_binary_segmentation, remove_connected_components
 from metrics import dice_metric, dice_norm_metric
 import nibabel as nib
 from tqdm import tqdm
@@ -95,7 +95,7 @@ def main(args):
         n_subjects = 0
         for count, batch_data in tqdm(enumerate(val_loader)):
             inputs = batch_data["image"].to(device)
-            # foreground_mask = batch_data["brain_mask"].numpy()[0, 0]
+            foreground_mask = batch_data["brain_mask"].squeeze().cpu().numpy()
 
             # get ensemble predictions
             all_outputs = []
@@ -104,12 +104,18 @@ def main(args):
                 semantic_pred, heatmap_pred, offsets_pred = outputs
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
-
+                heatmap_pred = heatmap_pred.half()
+                offsets_pred = offsets_pred.half()
             else:
                 semantic_pred = outputs
 
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
+            del inputs, outputs
+            torch.cuda.empty_cache()
+
+            # Apply brainmask
+            semantic_pred *= foreground_mask
 
             # get image metadata
             meta_dict = args.sequences[0] + "_meta_dict"
@@ -140,7 +146,7 @@ def main(args):
             else:
                 seg = remove_connected_components(seg)
                 instances_pred = postprocess_binary_segmentation(seg)
-
+            
             filename = filename_or_obj[:14] + "_seg-binary.nii.gz"
             filepath = os.path.join(path_pred, filename)
             write_nifti(seg, filepath,
@@ -162,7 +168,7 @@ def main(args):
                 # obtain and save predicted offsets
                 filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(offsets_pred.transpose(1, 2, 3, 0), filepath,
+                write_nifti(torch.squeeze(offsets_pred).cpu().numpy(), filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)

@@ -61,7 +61,7 @@ parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--cache_rate', default=1.0, type=float)
 # logging
 parser.add_argument('--val_interval', type=int, default=5, help='Validation every n-th epochs')
-parser.add_argument('--threshold', type=float, default=0.4, help='Probability threshold')
+parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
 
 parser.add_argument('--wandb_project', type=str, default='WMLIS', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
@@ -335,14 +335,6 @@ def main(args):
              'Training Loss/Offsets Loss': epoch_loss_offsets, 'Learning rate': current_lr, },
             step=epoch)
 
-        torch.save({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'wandb_run_id': wandb_run_id,
-            'scheduler': lr_scheduler.state_dict()
-        }, checkpoint_filename)
-
         ##### Validation #####
         if (epoch + 1) % val_interval == 0:
             model.eval()
@@ -371,8 +363,8 @@ def main(args):
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
 
-                torch.cuda.empty_cache()
                 del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
                 metric_DSC = dice_metric.aggregate().item()
                 wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)
@@ -403,35 +395,40 @@ def main(args):
 
                         val_semantic_pred, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 
-                        val_semantic_pred = act(val_semantic_pred)[:, 1]
-                        val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
-                                                        torch.tensor(0.0).to(device))
-                        val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
-                        for i in range(val_labels.shape[0]):  # for every image in batch
-                            sem_pred, inst_pred = postprocess(val_semantic_pred,
+                        val_semantic_pred = act(val_semantic_pred).cpu().numpy()
+                        val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
+                        del val_inputs
+                        torch.cuda.empty_cache()
+
+                        seg = val_semantic_pred
+                        seg[seg >= args.threshold] = 1
+                        seg[seg < args.threshold] = 0
+                        seg = np.squeeze(seg)
+
+                        sem_pred, inst_pred, _ = postprocess( seg,
                                                               val_center_pred,
                                                               val_offsets_pred)
-                            matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
-                                                                                           val_instances.squeeze().cpu().numpy())
-                            pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
-                                                      matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
-                                                      unmatched_ref=unmatched_ref)
+                        matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
+                                                                                   val_instances.squeeze().cpu().numpy())
+                        pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
+                                                  matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
+                                                  unmatched_ref=unmatched_ref)
 
-                            fbeta_val = f_beta_score(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
-                                                     unmatched_ref=unmatched_ref)
-                            ltpr_val = ltpr(matched_pairs=matched_pairs, unmatched_ref=unmatched_ref)
-                            ppv_val = ppv(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred)
-                            dice_scores = dice_per_tp(inst_pred, val_instances.squeeze().cpu().numpy(), matched_pairs)
-                            avg_dice_scores = sum(dice_scores) / len(dice_scores) if dice_scores else 0
-                            dic = DiC(inst_pred, val_instances.squeeze().cpu().numpy())
+                        fbeta_val = f_beta_score(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
+                                                 unmatched_ref=unmatched_ref)
+                        ltpr_val = ltpr(matched_pairs=matched_pairs, unmatched_ref=unmatched_ref)
+                        ppv_val = ppv(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred)
+                        dice_scores = dice_per_tp(inst_pred, val_instances.squeeze().cpu().numpy(), matched_pairs)
+                        avg_dice_scores = sum(dice_scores) / len(dice_scores) if dice_scores else 0
+                        dic = DiC(inst_pred, val_instances.squeeze().cpu().numpy())
 
-                            pqs += [pq_val]
-                            fbetas += [fbeta_val]
-                            ltprs += [ltpr_val]
-                            ppvs += [ppv_val]
-                            dics += [dic]
-                            if avg_dice_scores > 0:
-                                dice_scores_per_tp += [avg_dice_scores]
+                        pqs += [pq_val]
+                        fbetas += [fbeta_val]
+                        ltprs += [ltpr_val]
+                        ppvs += [ppv_val]
+                        dics += [dic]
+                        if avg_dice_scores > 0:
+                            dice_scores_per_tp += [avg_dice_scores]
 
                     metric_PQ = np.mean(pqs)
                     metric_F1 = np.mean(fbetas)
@@ -484,6 +481,15 @@ def main(args):
                       )
 
                 dice_metric.reset()
+
+        torch.save({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'wandb_run_id': wandb_run_id,
+            'scheduler': lr_scheduler.state_dict()
+        }, checkpoint_filename)
+
 
 
 if __name__ == "__main__":
