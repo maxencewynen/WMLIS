@@ -466,7 +466,7 @@ def main(args):
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for PQ")
 
-                if metric_DSC > best_metric_F1 and epoch > 5:
+                if metric_F1 > best_metric_F1 and epoch > 5:
                     best_metric_F1 = metric_F1
                     best_metric_epoch_F1 = epoch + 1
                     save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
