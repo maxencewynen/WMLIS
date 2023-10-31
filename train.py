@@ -30,9 +30,9 @@ parser.add_argument('--separate_decoders', action="store_true", default=False,
                     help="Whether to use separate decoders for the segmentation and center prediction tasks")
 parser.add_argument('--frozen_learning_rate', type=float, default=-1, help='Specify the initial learning rate')
 parser.add_argument('--learning_rate', type=float, default=1e-5, help='Specify the initial learning rate')
-parser.add_argument('--seg_loss_weight', type=float, default=1, help='Specify the weight of the segmentation loss')
-parser.add_argument('--heatmap_loss_weight', type=float, default=100, help='Specify the weight of the heatmap loss')
-parser.add_argument('--offsets_loss_weight', type=float, default=10, help='Specify the weight of the offsets loss')
+parser.add_argument('--seg_loss_weight', type=float, default=0, help='Specify the weight of the segmentation loss')
+parser.add_argument('--heatmap_loss_weight', type=float, default=0, help='Specify the weight of the heatmap loss')
+parser.add_argument('--offsets_loss_weight', type=float, default=1, help='Specify the weight of the offsets loss')
 parser.add_argument('--offsets_scale', type=float, default=1,
                     help='Specify the scale to multiply the predicted offsets with')
 parser.add_argument('--offsets_loss', type=str, default="l1",
@@ -63,7 +63,7 @@ parser.add_argument('--cache_rate', default=1.0, type=float)
 parser.add_argument('--val_interval', type=int, default=5, help='Validation every n-th epochs')
 parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
 
-parser.add_argument('--wandb_project', type=str, default='WMLIS', help='wandb project name')
+parser.add_argument('--wandb_project', type=str, default='WMLIS_Offsets', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
 parser.add_argument('--force_restart', default=False, action='store_true',
                     help="force the training to restart at 0 even if a checkpoint was found")
@@ -340,6 +340,7 @@ def main(args):
             model.eval()
             with torch.no_grad():
                 nDSC_list = []
+                max_votes = []
                 for val_data in val_loader:
                     val_inputs, val_labels, val_heatmaps, val_offsets, val_bms = (
                         val_data["image"].to(device),
@@ -349,13 +350,13 @@ def main(args):
                         val_data["brain_mask"].squeeze().cpu().numpy()
                     )
 
-                    val_semantic_pred, _, _ = inference(val_inputs, model)
+                    vsp, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 
-                    for_dice_outputs = [post_trans(i) for i in decollate_batch(val_semantic_pred)]
+                    for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
 
                     dice_metric(y_pred=for_dice_outputs, y=val_labels)
 
-                    val_semantic_pred = act(val_semantic_pred)[:, 1]
+                    val_semantic_pred = act(vsp)[:, 1]
                     val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
                     val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
@@ -363,17 +364,38 @@ def main(args):
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
 
+                    val_semantic_pred = act(vsp).cpu().numpy()
+                    val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
+                    del val_inputs
+                    torch.cuda.empty_cache()
+
+                    seg = val_semantic_pred
+                    seg[seg >= args.threshold] = 1
+                    seg[seg < args.threshold] = 0
+                    seg = np.squeeze(seg)
+
+                    sem_pred, inst_pred, votes = postprocess(seg,
+                                                          val_center_pred,
+                                                          val_offsets_pred,
+                                                          compute_voting=True)
+                    max_votes += [votes.max().cpu().item()]
+
+
                 del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
+                metric_mMV = np.mean(max_votes)
                 metric_DSC = dice_metric.aggregate().item()
-                wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)
+                wandb.log({
+                    'Segmentation Metrics/nDSC (val)': metric_nDSC, 
+                    'Segmentation Metrics/ DSC (val)': metric_DSC,
+                    'Offsets Metrics/Mean max vote (val)': metric_mMV}, step=epoch)
                 metric_values_nDSC.append(metric_nDSC)
                 metric_values_DSC.append(metric_DSC)
 
                 metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp = 0, 0, 0, 0, 0, 0
 
-                if metric_DSC > 0.6:
+                if metric_DSC > 0.65:
                     pqs = []
                     fbetas = []
                     ltprs = []
@@ -405,9 +427,10 @@ def main(args):
                         seg[seg < args.threshold] = 0
                         seg = np.squeeze(seg)
 
-                        sem_pred, inst_pred, _ = postprocess( seg,
-                                                              val_center_pred,
-                                                              val_offsets_pred)
+                        sem_pred, inst_pred, votes = postprocess(seg,
+                                                                 val_center_pred,
+                                                                 val_offsets_pred,
+                                                                 compute_voting=True)
                         matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
                                                                                    val_instances.squeeze().cpu().numpy())
                         pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
@@ -466,7 +489,7 @@ def main(args):
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for PQ")
 
-                if metric_DSC > best_metric_F1 and epoch > 5:
+                if metric_F1 > best_metric_F1 and epoch > 5:
                     best_metric_F1 = metric_F1
                     best_metric_epoch_F1 = epoch + 1
                     save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
