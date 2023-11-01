@@ -82,6 +82,12 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=200):
         top_k_scores, _ = torch.topk(torch.flatten(ctr_hmp), top_k)
         return torch.nonzero(ctr_hmp > top_k_scores[-1]).short()
 
+def make_votes_readable(votes):
+    votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
+    votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
+    return votes*100
+    
+
 
 def group_pixels(ctr, offsets, compute_voting=False):
     """
@@ -122,9 +128,12 @@ def group_pixels(ctr, offsets, compute_voting=False):
         votes = torch.zeros(1, votes.shape[1], votes.shape[2], votes.shape[3], dtype=torch.long, device=votes.device)
         # Use advanced indexing to set counts in the result tensor
         votes[0, unique_coords[0], unique_coords[1], unique_coords[2]] = counts
-        votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
-        votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
-        votes*=100
+    
+    if ctr.shape[0] == 0:
+        if compute_voting:
+            return torch.zeros_like(coord), torch.squeeze(votes)
+        else:
+            return np.zeros_like(coord)
 
     ctr_loc = ctr_loc.view(3, depth * height * width).transpose(1, 0)
     
@@ -138,7 +147,7 @@ def group_pixels(ctr, offsets, compute_voting=False):
 
     # Compute the Euclidean distance in 3D space
     distance = torch.norm(ctr - ctr_loc, dim=-1)
-
+    
     # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
     instance_id = torch.argmin(distance, dim=0).view(1, depth, height, width) + 1
     del distance, ctr_loc, ctr

@@ -349,13 +349,13 @@ def main(args):
                         val_data["offsets"].to(device),
                         val_data["brain_mask"].squeeze().cpu().numpy()
                     )
-
+                    
                     vsp, val_center_pred, val_offsets_pred = inference(val_inputs, model)
-
+                    
                     for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
 
                     dice_metric(y_pred=for_dice_outputs, y=val_labels)
-
+                    
                     val_semantic_pred = act(vsp)[:, 1]
                     val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
@@ -374,14 +374,14 @@ def main(args):
                     seg[seg < args.threshold] = 0
                     seg = np.squeeze(seg)
 
-                    sem_pred, inst_pred, votes = postprocess(seg,
+                    sem_pred, inst_pred, _, votes = postprocess(seg,
                                                           val_center_pred,
                                                           val_offsets_pred,
                                                           compute_voting=True)
-                    max_votes += [votes.max().cpu().item()]
+                    max_votes += [votes.max()]
 
 
-                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
                 metric_mMV = np.mean(max_votes)
@@ -427,10 +427,10 @@ def main(args):
                         seg[seg < args.threshold] = 0
                         seg = np.squeeze(seg)
 
-                        sem_pred, inst_pred, votes = postprocess(seg,
+                        sem_pred, inst_pred, _ = postprocess(seg,
                                                                  val_center_pred,
                                                                  val_offsets_pred,
-                                                                 compute_voting=True)
+                                                                 compute_voting=False)
                         matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
                                                                                    val_instances.squeeze().cpu().numpy())
                         pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
