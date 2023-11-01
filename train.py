@@ -218,6 +218,8 @@ def main(args):
         offset_loss_fn = nn.L1Loss(reduction='none')
     elif args.offsets_loss == 'sl1':
         offset_loss_fn = nn.SmoothL1Loss(reduction='none')
+    elif args.offsets_loss == 'mse':
+        offset_loss_fn = nn.MSELoss(reduction='none')
 
     # Initialize other variables and metrics
     act = nn.Softmax(dim=1)
@@ -378,6 +380,7 @@ def main(args):
                                                           val_center_pred,
                                                           val_offsets_pred,
                                                           compute_voting=True)
+                    votes *= val_bms
                     max_votes += [votes.max()]
 
 
