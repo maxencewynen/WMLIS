@@ -187,6 +187,8 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     instance_mask = np.squeeze(instance_ids.cpu().numpy().astype(np.int32)) * semantic_mask
     
     centers_mx = np.zeros_like(semantic_mask)
+    del instance_ids
+    torch.cuda.empty_cache()
     instance_centers = instance_centers.cpu().numpy()
     if instance_centers.shape[0] > 0:
         zcoord = instance_centers[:, 0]
