@@ -235,6 +235,7 @@ def main(args):
     best_metric_DSC, best_metric_epoch_DSC = -1, -1
     best_metric_PQ, best_metric_epoch_PQ = -1, -1
     best_metric_F1, best_metric_epoch_F1 = -1, -1
+    best_metric_mMV, best_metric_epoch_mMV = -1, -1
     epoch_loss_values, metric_values_nDSC, metric_values_DSC = [], [], []
 
     # Initialize scaler
@@ -340,6 +341,7 @@ def main(args):
             model.eval()
             with torch.no_grad():
                 nDSC_list = []
+                max_votes = []
                 for val_data in val_loader:
                     val_inputs, val_labels, val_heatmaps, val_offsets, val_bms = (
                         val_data["image"].to(device),
@@ -349,25 +351,47 @@ def main(args):
                         val_data["brain_mask"].squeeze().cpu().numpy()
                     )
 
-                    val_semantic_pred, _, _ = inference(val_inputs, model)
+                    vsp, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 
-                    for_dice_outputs = [post_trans(i) for i in decollate_batch(val_semantic_pred)]
+                    for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
 
                     dice_metric(y_pred=for_dice_outputs, y=val_labels)
 
-                    val_semantic_pred = act(val_semantic_pred)[:, 1]
+                    val_semantic_pred = act(vsp)[:, 1]
                     val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
                     val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
                     nDSC = dice_norm_metric(val_labels.squeeze().cpu().numpy()[val_bms == 1],
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
+                    
+                    val_semantic_pred = act(vsp).cpu().numpy()
+                    val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
+                    del val_inputs
+                    torch.cuda.empty_cache()
 
-                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                    seg = val_semantic_pred
+                    seg[seg >= args.threshold] = 1
+                    seg[seg < args.threshold] = 0
+                    seg = np.squeeze(seg)
+
+                    sem_pred, inst_pred, _, votes = postprocess(seg,
+                                                          val_center_pred,
+                                                          val_offsets_pred,
+                                                          compute_voting=True)
+                    votes *= val_bms
+                    max_votes += [votes.max()]
+
+                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
+                metric_mMV = np.mean(max_votes)
                 metric_DSC = dice_metric.aggregate().item()
-                wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)
+                wandb.log({
+                    'Segmentation Metrics/nDSC (val)': metric_nDSC, 
+                    'Segmentation Metrics/ DSC (val)': metric_DSC,
+                    'Offsets Metrics/Mean max vote (val)': metric_mMV}, step=epoch)
+                
                 metric_values_nDSC.append(metric_nDSC)
                 metric_values_DSC.append(metric_DSC)
 
@@ -472,6 +496,13 @@ def main(args):
                     save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for F1")
+
+                if metric_mMV > best_metric_mMV and epoch > 5:
+                    best_metric_mMV = metric_F1
+                    best_metric_epoch_mMV = epoch + 1
+                    save_path = os.path.join(save_dir, f"best_mMV_{args.name}_seed{args.seed}.pth")
+                    torch.save(model.state_dict(), save_path)
+                    print("saved new best metric model for mean max votes")
 
                 print(f"current epoch: {epoch + 1} current mean normalized dice: {metric_nDSC:.4f}"
                       f"\nbest mean normalized dice: {best_metric_nDSC:.4f} at epoch: {best_metric_epoch_nDSC}"
