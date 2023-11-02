@@ -219,13 +219,13 @@ class PanopticDeepLab3D(nn.Module):
         s[1] = self.num_classes
         ss = tuple(s)
         
+        device = oc_decoder_out.device
         if self.heatmap_loss_weight <= 0:
             s[1] = 1
             sc = tuple(s)
-            device = oc_decoder_out.device
             return torch.zeros(ss).to(device), torch.zeros(sc).to(device), oc_decoder_out * self.scale_offsets
 
-        return torch.zeros(ss).to(device), oc_decoder_out[:, :1], oc_decoder_out[:,1:] * self.scale
+        return torch.zeros(ss).to(device), oc_decoder_out[:, :1], oc_decoder_out[:,1:] * self.scale_offsets
 
 
     def _init_parameters(self):

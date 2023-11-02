@@ -189,7 +189,10 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     centers_mx = np.zeros_like(semantic_mask)
     instance_centers = instance_centers.cpu().numpy()
     if instance_centers.shape[0] > 0:
-        centers_mx[instance_centers[:, 0], instance_centers[:, 1], instance_centers[:, 2]] = 1
+        zcoord = instance_centers[:, 0]
+        ycoord = instance_centers[:, 1]
+        xcoord = instance_centers[:, 2]
+        centers_mx[zcoord, ycoord, xcoord] = 1
 
     ret = (instance_mask, centers_mx.astype(np.uint8))
     ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()
