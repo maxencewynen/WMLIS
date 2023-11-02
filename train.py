@@ -397,7 +397,7 @@ def main(args):
                         seg[seg < args.threshold] = 0
                         seg = np.squeeze(seg)
                     else:
-                        seg = None
+                        seg = np.zeros_like(vsp[:,1].squeeze().cpu().numpy())
             
                     sem_pred, inst_pred, _, votes = postprocess(seg,
                                                                 val_center_pred,
