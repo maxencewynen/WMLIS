@@ -173,7 +173,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
             instance_centers: A numpy.ndarray of shape [W, H, D].
             (Optional: voting_image: A numpy.ndarray of shape [W, H, D].)
     """
-    assert len(np.unique(semantic_mask)) == 2, "Semantic mask should be binary"
+    assert len(np.unique(semantic_mask)) <= 2, "Semantic mask should be binary"
     semantic_mask = remove_connected_components(semantic_mask)
 
     instance_centers = find_instance_center(heatmap)
@@ -188,7 +188,8 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     
     centers_mx = np.zeros_like(semantic_mask)
     instance_centers = instance_centers.cpu().numpy()
-    centers_mx[instance_centers[:, 0], instance_centers[:, 1], instance_centers[:, 2]] = 1
+    if instance_centers.shape[0] > 0:
+        centers_mx[instance_centers[:, 0], instance_centers[:, 1], instance_centers[:, 2]] = 1
 
     ret = (instance_mask, centers_mx.astype(np.uint8))
     ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()

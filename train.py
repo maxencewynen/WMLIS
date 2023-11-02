@@ -182,7 +182,7 @@ def main(args):
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2, separate_decoders=args.separate_decoders,
-                                      scale_offsets=args.offsets_scale
+                                      scale_offsets=args.offsets_scale,
                                       seg_loss_weight=args.seg_loss_weight,
                                       heatmap_loss_weight=args.heatmap_loss_weight,
                                       offsets_loss_weight=args.offsets_loss_weight).to(device)
@@ -279,7 +279,7 @@ def main(args):
                     semantic_pred, center_pred, offsets_pred = model(inputs)
                     loss = 0
                     ### SEGMENTATION LOSS ###
-                    if semantic_pred is not None:
+                    if seg_loss_weight > 0:
                         # Dice loss
                         dice_loss = loss_function_dice(semantic_pred, labels)
                         # Focal loss
@@ -289,10 +289,10 @@ def main(args):
                         loss2 = (1 - pt) ** gamma_focal * ce
                         focal_loss = torch.mean(loss2)
                         segmentation_loss = dice_weight * dice_loss + focal_weight * focal_loss
-                        loss += seg_loss_weight *s egmentation_loss
+                        loss += seg_loss_weight * segmentation_loss
                     
                     ### COM PREDICTION LOSS ###
-                    if center_pred is not None:
+                    if heatmap_loss_weight > 0:
                         mse_loss = loss_function_mse(center_pred, center_heatmap)
                         loss += heatmap_loss_weight * mse_loss
 
@@ -389,7 +389,7 @@ def main(args):
 
                         val_semantic_pred = act(vsp).cpu().numpy()
                         val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
-                        del val_inputs, for_dice_outputs
+                        del val_inputs, for_dice_outputs, val_semantic_pred
                         torch.cuda.empty_cache()
 
                         seg = val_semantic_pred
@@ -407,17 +407,20 @@ def main(args):
                     max_votes += [votes.max()]
 
 
-                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                del val_labels, val_heatmaps, val_offsets, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
+                
+                metric_mMV = np.mean(max_votes)
                 logs = {'Offsets Metrics/Mean max vote (val)': metric_mMV} 
                 if seg_loss_weight > 0:
                     metric_nDSC = np.mean(nDSC_list)
-                    metric_mMV = np.mean(max_votes)
                     metric_DSC = dice_metric.aggregate().item()
                     logs['Segmentation Metrics/nDSC (val)'] = metric_nDSC 
                     logs['Segmentation Metrics/ DSC (val)'] = metric_DSC
                     metric_values_nDSC.append(metric_nDSC)
                     metric_values_DSC.append(metric_DSC)
+                else: 
+                    metric_DSC, metric_nDSC, metric_F1, metric_PQ = -1,-1,-1,-1
 
                 wandb.log(logs, step=epoch)
                 metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp = 0, 0, 0, 0, 0, 0
@@ -537,6 +540,7 @@ def main(args):
                       f"\nbest mean dice: {best_metric_DSC:.4f} at epoch: {best_metric_epoch_DSC}"
                       f"\nbest mean PQ: {best_metric_PQ:.4f} at epoch: {best_metric_epoch_PQ}"
                       f"\nbest mean F1: {best_metric_F1:.4f} at epoch: {best_metric_epoch_F1}"
+                      f"\nbest mean max votes: {best_metric_mMV:.4f} at epoch: {best_metric_epoch_mMV}"
                       )
 
                 dice_metric.reset()

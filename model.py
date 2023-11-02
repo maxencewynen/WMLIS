@@ -150,6 +150,7 @@ class PanopticDeepLab3D(nn.Module):
         self.heatmap_loss_weight = heatmap_loss_weight
         self.offsets_loss_weight = offsets_loss_weight
         self.separate_decoders = separate_decoders
+        self.num_classes = num_classes
 
         # Analysis Path
         self.a_block1 = Conv3DBlock(in_channels=in_channels, out_channels=level_channels[0])
@@ -214,11 +215,17 @@ class PanopticDeepLab3D(nn.Module):
         oc_decoder_out = self.oc_block3(out, residual_level3)
         oc_decoder_out = self.oc_block2(oc_decoder_out, residual_level2)
         oc_decoder_out = self.oc_block1(oc_decoder_out, residual_level1)
+        s = list(oc_decoder_out.shape)
+        s[1] = self.num_classes
+        ss = tuple(s)
         
         if self.heatmap_loss_weight <= 0:
-            return None, None, oc_decoder_out * self.scale_offsets
+            s[1] = 1
+            sc = tuple(s)
+            device = oc_decoder_out.device
+            return torch.zeros(ss).to(device), torch.zeros(sc).to(device), oc_decoder_out * self.scale_offsets
 
-        return None, oc_decoder_out[:, :1], oc_decoder_out[:,1:] * self.scale
+        return torch.zeros(ss).to(device), oc_decoder_out[:, :1], oc_decoder_out[:,1:] * self.scale
 
 
     def _init_parameters(self):
