@@ -98,9 +98,9 @@ class LesionOffsetTransformd(MapTransform):
         data = np.squeeze(data)
 
         heatmap = np.zeros_like(data)
-        offset_x = np.zeros_like(data)
-        offset_y = np.zeros_like(data)
-        offset_z = np.zeros_like(data)
+        offset_x = np.zeros_like(data, dtype=np.float32)
+        offset_y = np.zeros_like(data, dtype=np.float32)
+        offset_z = np.zeros_like(data, dtype=np.float32)
 
         # Create coordinate grids
         x_grid, y_grid, z_grid = np.meshgrid(np.arange(data.shape[0]),
