@@ -148,7 +148,10 @@ def main(args):
     checkpoint_filename = os.path.join(save_dir, 'checkpoint.pth.tar')
     if os.path.exists(checkpoint_filename) and not args.force_restart:
         model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2, separate_decoders=args.separate_decoders,
-                                  scale_offsets=args.offsets_scale).to(device)
+                                  scale_offsets=args.offsets_scale,
+                                  seg_loss_weight=args.seg_loss_weight,
+                                  heatmap_loss_weight=args.heatmap_loss_weight,
+                                  offsets_loss_weight=args.offsets_loss_weight).to(device)
 
         checkpoint = torch.load(checkpoint_filename)
 
@@ -179,7 +182,11 @@ def main(args):
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = PanopticDeepLab3D(in_channels=len(args.I), num_classes=2, separate_decoders=args.separate_decoders,
-                                      scale_offsets=args.offsets_scale).to(device)
+                                      scale_offsets=args.offsets_scale
+                                      seg_loss_weight=args.seg_loss_weight,
+                                      heatmap_loss_weight=args.heatmap_loss_weight,
+                                      offsets_loss_weight=args.offsets_loss_weight).to(device)
+
 
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
@@ -270,20 +277,24 @@ def main(args):
 
                 with torch.cuda.amp.autocast():
                     semantic_pred, center_pred, offsets_pred = model(inputs)
-
+                    loss = 0
                     ### SEGMENTATION LOSS ###
-                    # Dice loss
-                    dice_loss = loss_function_dice(semantic_pred, labels)
-                    # Focal loss
-                    ce_loss = nn.CrossEntropyLoss(reduction='none')
-                    ce = ce_loss(semantic_pred, torch.squeeze(labels, dim=1))
-                    pt = torch.exp(-ce)
-                    loss2 = (1 - pt) ** gamma_focal * ce
-                    focal_loss = torch.mean(loss2)
-                    segmentation_loss = dice_weight * dice_loss + focal_weight * focal_loss
-
+                    if semantic_pred is not None:
+                        # Dice loss
+                        dice_loss = loss_function_dice(semantic_pred, labels)
+                        # Focal loss
+                        ce_loss = nn.CrossEntropyLoss(reduction='none')
+                        ce = ce_loss(semantic_pred, torch.squeeze(labels, dim=1))
+                        pt = torch.exp(-ce)
+                        loss2 = (1 - pt) ** gamma_focal * ce
+                        focal_loss = torch.mean(loss2)
+                        segmentation_loss = dice_weight * dice_loss + focal_weight * focal_loss
+                        loss += seg_loss_weight *s egmentation_loss
+                    
                     ### COM PREDICTION LOSS ###
-                    mse_loss = loss_function_mse(center_pred, center_heatmap)
+                    if center_pred is not None:
+                        mse_loss = loss_function_mse(center_pred, center_heatmap)
+                        loss += heatmap_loss_weight * mse_loss
 
                     ### COM REGRESSION LOSS ###
                     # Disregard voxels outside of the GT segmentation
@@ -293,16 +304,19 @@ def main(args):
                         offset_loss = offset_loss.sum() / offset_loss_weights_matrix.sum()
                     else:  # No foreground voxels
                         offset_loss = offset_loss.sum() * 0
-
+                    
+                    loss += offsets_loss_weight * offset_loss
                     ### TOTAL LOSS ###
-                    loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (
-                            offsets_loss_weight * offset_loss)
+                    #loss = (seg_loss_weight * segmentation_loss) + (heatmap_loss_weight * mse_loss) + (
+                    #        offsets_loss_weight * offset_loss)
 
                 epoch_loss += loss.item()
-                epoch_loss_ce += focal_loss.item()
-                epoch_loss_dice += dice_loss.item()
-                epoch_loss_seg += segmentation_loss.item()
-                epoch_loss_mse += mse_loss.item()
+                if seg_loss_weight > 0:
+                    epoch_loss_ce += focal_loss.item()
+                    epoch_loss_dice += dice_loss.item()
+                    epoch_loss_seg += segmentation_loss.item()
+                if heatmap_loss_weight > 0:
+                    epoch_loss_mse += mse_loss.item()
                 epoch_loss_offsets += offset_loss.item()
 
                 scaler.scale(loss).backward()
@@ -320,23 +334,28 @@ def main(args):
                         f"(elapsed time: {int(elapsed_time // 60)}min {int(elapsed_time % 60)}s)")
 
         epoch_loss /= step_print
-        epoch_loss_dice /= step_print
-        epoch_loss_ce /= step_print
-        epoch_loss_seg /= step_print
-        epoch_loss_mse /= step_print
+        if seg_loss_weight > 0:
+            epoch_loss_dice /= step_print
+            epoch_loss_ce /= step_print
+            epoch_loss_seg /= step_print
+        if heatmap_loss_weight > 0:
+            epoch_loss_mse /= step_print
         epoch_loss_offsets /= step_print
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch + 1} average loss: {epoch_loss:.4f}")
 
         current_lr = optimizer.param_groups[0]['lr']
         lr_scheduler.step()
+        
+        logs = {'Training Loss/Total Loss': epoch_loss, 'Training Loss/Offsets Loss': epoch_loss_offsets, 'Learning rate': current_lr} 
+        if seg_loss_weight > 0:
+            logs['Training Segmentation Loss/Dice Loss'] = epoch_loss_dice
+            logs['Training Segmentation Loss/Focal Loss'] = epoch_loss_ce
+            logs['Training Loss/Segmentation Loss'] = epoch_loss_seg
+        if heatmap_loss_weight > 0:
+            logs['Training Loss/Center Prediction Loss'] = epoch_loss_mse
 
-        wandb.log(
-            {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice,
-             'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
-             'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
-             'Training Loss/Offsets Loss': epoch_loss_offsets, 'Learning rate': current_lr, },
-            step=epoch)
+        wandb.log(logs, step=epoch)
 
         ##### Validation #####
         if (epoch + 1) % val_interval == 0:
@@ -355,51 +374,55 @@ def main(args):
                     
                     vsp, val_center_pred, val_offsets_pred = inference(val_inputs, model)
                     
-                    for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
+                    if seg_loss_weight > 0:
+                        for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
 
-                    dice_metric(y_pred=for_dice_outputs, y=val_labels)
-                    
-                    val_semantic_pred = act(vsp)[:, 1]
-                    val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
-                                                    torch.tensor(0.0).to(device))
-                    val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
-                    nDSC = dice_norm_metric(val_labels.squeeze().cpu().numpy()[val_bms == 1],
-                                            val_semantic_pred[val_bms == 1])
-                    nDSC_list.append(nDSC)
+                        dice_metric(y_pred=for_dice_outputs, y=val_labels)
+                        
+                        val_semantic_pred = act(vsp)[:, 1]
+                        val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
+                                                        torch.tensor(0.0).to(device))
+                        val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
+                        nDSC = dice_norm_metric(val_labels.squeeze().cpu().numpy()[val_bms == 1],
+                                                val_semantic_pred[val_bms == 1])
+                        nDSC_list.append(nDSC)
 
-                    val_semantic_pred = act(vsp).cpu().numpy()
-                    val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
-                    del val_inputs
-                    torch.cuda.empty_cache()
+                        val_semantic_pred = act(vsp).cpu().numpy()
+                        val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
+                        del val_inputs, for_dice_outputs
+                        torch.cuda.empty_cache()
 
-                    seg = val_semantic_pred
-                    seg[seg >= args.threshold] = 1
-                    seg[seg < args.threshold] = 0
-                    seg = np.squeeze(seg)
-
+                        seg = val_semantic_pred
+                        seg[seg >= args.threshold] = 1
+                        seg[seg < args.threshold] = 0
+                        seg = np.squeeze(seg)
+                    else:
+                        seg = None
+            
                     sem_pred, inst_pred, _, votes = postprocess(seg,
-                                                          val_center_pred,
-                                                          val_offsets_pred,
-                                                          compute_voting=True)
+                                                                val_center_pred,
+                                                                val_offsets_pred,
+                                                                compute_voting=True)
                     votes *= val_bms
                     max_votes += [votes.max()]
 
 
-                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
-                metric_nDSC = np.mean(nDSC_list)
-                metric_mMV = np.mean(max_votes)
-                metric_DSC = dice_metric.aggregate().item()
-                wandb.log({
-                    'Segmentation Metrics/nDSC (val)': metric_nDSC, 
-                    'Segmentation Metrics/ DSC (val)': metric_DSC,
-                    'Offsets Metrics/Mean max vote (val)': metric_mMV}, step=epoch)
-                metric_values_nDSC.append(metric_nDSC)
-                metric_values_DSC.append(metric_DSC)
+                logs = {'Offsets Metrics/Mean max vote (val)': metric_mMV} 
+                if seg_loss_weight > 0:
+                    metric_nDSC = np.mean(nDSC_list)
+                    metric_mMV = np.mean(max_votes)
+                    metric_DSC = dice_metric.aggregate().item()
+                    logs['Segmentation Metrics/nDSC (val)'] = metric_nDSC 
+                    logs['Segmentation Metrics/ DSC (val)'] = metric_DSC
+                    metric_values_nDSC.append(metric_nDSC)
+                    metric_values_DSC.append(metric_DSC)
 
+                wandb.log(logs, step=epoch)
                 metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp = 0, 0, 0, 0, 0, 0
 
-                if metric_DSC > 0.65:
+                if metric_DSC > 0.65 and seg_loss_weight > 0:
                     pqs = []
                     fbetas = []
                     ltprs = []
@@ -472,28 +495,28 @@ def main(args):
                                'Instance Segmentation Metrics/Dice per TP (val)': metric_dice_per_tp
                                }, step=epoch)
 
-                if metric_nDSC > best_metric_nDSC and epoch > 5:
+                if metric_nDSC > best_metric_nDSC and epoch > 5 and seg_loss_weight > 0:
                     best_metric_nDSC = metric_nDSC
                     best_metric_epoch_nDSC = epoch + 1
                     save_path = os.path.join(save_dir, f"best_nDSC_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for nDSC")
 
-                if metric_DSC > best_metric_DSC and epoch > 5:
+                if metric_DSC > best_metric_DSC and epoch > 5 and seg_loss_weight > 0:
                     best_metric_DSC = metric_DSC
                     best_metric_epoch_DSC = epoch + 1
                     save_path = os.path.join(save_dir, f"best_DSC_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for DSC")
 
-                if metric_PQ > best_metric_PQ and epoch > 5:
+                if metric_PQ > best_metric_PQ and epoch > 5 and seg_loss_weight > 0:
                     best_metric_PQ = metric_PQ
                     best_metric_epoch_PQ = epoch + 1
                     save_path = os.path.join(save_dir, f"best_PQ_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for PQ")
 
-                if metric_F1 > best_metric_F1 and epoch > 5:
+                if metric_F1 > best_metric_F1 and epoch > 5 and seg_loss_weight > 0:
                     best_metric_F1 = metric_F1
                     best_metric_epoch_F1 = epoch + 1
                     save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
