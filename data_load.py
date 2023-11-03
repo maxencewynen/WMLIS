@@ -39,18 +39,28 @@ class Printer(Callable):
 
 
 class SaveImageKeysd:
-    def __init__(self, keys, output_dir):
+    def __init__(self, keys, output_dir, suffix=""):
         self.keys = keys
         self.output_dir = output_dir
+        self.suffix = suffix
 
     def __call__(self, data):
         for key in self.keys:
-            image = data[key]
-            filename = os.path.join(self.output_dir, f"{key}.nii.gz")
+            image = data[key].copy()
+            if type(image) == torch.Tensor:
+                image = image.cpu().numpy()
+            image = np.squeeze(image)
+            while len(image.shape) > 3:
+                image = image[0,:]
+            if self.suffix != "":
+                filename = key + "_" + self.suffix + ".nii.gz"
+            else:
+                filename = key + ".nii.gz"
+            filename = os.path.join(self.output_dir, filename)
             # Assuming you are using NIfTI images
             # Replace ".nii.gz" with ".png" or ".jpg" if using other formats
             # Assuming you have SimpleITK or nibabel to save the images
-            image.save(filename)
+            nib.save(nib.Nifti1Image(image, np.eye(4)), filename)
         return data
 
 
@@ -158,10 +168,11 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         LoadImaged(keys=I + masks),
         AddChanneld(keys=I + masks),
         # Lambdad(keys=non_label_masks, func=lambda x: x.astype(np.uint), allow_missing_keys=True),
-        NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
-        RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
-        RandScaleIntensityd(keys=non_quantitative_images, factors=0.1, prob=1.0),
+        # NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
+        # RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
+        # RandScaleIntensityd(keys=non_quantitative_images, factors=0.1, prob=1.0),
         LesionOffsetTransformd(keys="instance_mask"),
+        SaveImageKeysd(keys=I + masks + other_keys, output_dir="/home/mwynen/data/cusl_wml/debug/", suffix="before"),
     ]
     if apply_mask:
         transform_list += [MaskIntensityd(keys=I + masks, mask_key=apply_mask)]
@@ -184,6 +195,7 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
                     rotate_range=(np.pi / 12, np.pi / 12, np.pi / 12),
                     scale_range=(0.1, 0.1, 0.1), padding_mode='border'),
         ToTensord(keys=I + other_keys),
+        SaveImageKeysd(keys=I + masks + other_keys, output_dir="/home/mwynen/data/cusl_wml/debug/", suffix="after"),
         ConcatItemsd(keys=I, name="image", dim=0)
     ]
     # transform.set_random_state(seed=seed)
@@ -236,11 +248,11 @@ def get_train_dataloader(data_dir, num_workers, cache_rate=0.1, seed=1, I=['FLAI
     assert os.path.exists(data_dir), f"data_dir path does not exist ({data_dir})"
     assert apply_mask is None or type(apply_mask) == str
     traindir = "train" if cp_factor == 0 else f"train_scp-f{cp_factor}_cl5"
-    img_dir = pjoin(data_dir, traindir, "images")
+    img_dir = pjoin(data_dir, traindir, "labels")
     lbl_dir = pjoin(data_dir, traindir, "labels")
     bm_path = pjoin(data_dir, "train", "brainmasks")
     mask_path = None if not apply_mask else pjoin(data_dir, "train", apply_mask)
-
+    I = ["mask-instances"]
     # Collect all modality images sorted
     all_modality_images = {}
     all_modality_images = {
@@ -319,7 +331,7 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
 
     assert os.path.exists(data_dir), f"data_dir path does not exist ({data_dir})"
     assert apply_mask is None or type(apply_mask) == str
-    img_dir = pjoin(data_dir, "val", "images") if not test else pjoin(data_dir, "test", "images")
+    img_dir = pjoin(data_dir, "val", "labels") if not test else pjoin(data_dir, "test", "labels")
     lbl_dir = pjoin(data_dir, "val", "labels") if not test else pjoin(data_dir, "test", "labels")
     bm_path = pjoin(data_dir, "val", "brainmasks") if not test else pjoin(data_dir, "test", "brainmasks")
     if not apply_mask:
@@ -327,6 +339,7 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
     else:
         mask_path = pjoin(data_dir, "val", apply_mask) if not test else pjoin(data_dir, "test", apply_mask)
 
+    I = ["mask-instances"]
     # Collect all modality images sorted
     all_modality_images = {}
     all_modality_images = {
