@@ -356,7 +356,6 @@ def main(args):
                     for_dice_outputs = [post_trans(i) for i in decollate_batch(vsp)]
 
                     dice_metric(y_pred=for_dice_outputs, y=val_labels)
-
                     val_semantic_pred = act(vsp)[:, 1]
                     val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
                                                     torch.tensor(0.0).to(device))
@@ -365,17 +364,11 @@ def main(args):
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
                     
-                    val_semantic_pred = act(vsp).cpu().numpy()
-                    val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
+                    val_semantic_pred *= val_bms
                     del val_inputs
                     torch.cuda.empty_cache()
-
-                    seg = val_semantic_pred
-                    seg[seg >= args.threshold] = 1
-                    seg[seg < args.threshold] = 0
-                    seg = np.squeeze(seg)
-
-                    sem_pred, inst_pred, _, votes = postprocess(seg,
+                    
+                    sem_pred, inst_pred, _, votes = postprocess(val_semantic_pred,
                                                           val_center_pred,
                                                           val_offsets_pred,
                                                           compute_voting=True)

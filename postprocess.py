@@ -82,11 +82,11 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=200):
         top_k_scores, _ = torch.topk(torch.flatten(ctr_hmp), top_k)
         return torch.nonzero(ctr_hmp > top_k_scores[-1]).short()
 
-
 def make_votes_readable(votes):
     votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
     votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
     return votes*100
+    
 
 
 def group_pixels(ctr, offsets, compute_voting=False):
@@ -171,7 +171,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
             instance_centers: A numpy.ndarray of shape [W, H, D].
             (Optional: voting_image: A numpy.ndarray of shape [W, H, D].)
     """
-    assert len(np.unique(semantic_mask)) == 2, "Semantic mask should be binary"
+    assert len(np.unique(semantic_mask)) <= 2, "Semantic mask should be binary"
     semantic_mask = remove_connected_components(semantic_mask)
 
     instance_centers = find_instance_center(heatmap)
