@@ -341,7 +341,6 @@ def main(args):
             model.eval()
             with torch.no_grad():
                 nDSC_list = []
-                max_votes = []
                 for val_data in val_loader:
                     val_inputs, val_labels, val_heatmaps, val_offsets, val_bms = (
                         val_data["image"].to(device),
@@ -363,32 +362,19 @@ def main(args):
                     nDSC = dice_norm_metric(val_labels.squeeze().cpu().numpy()[val_bms == 1],
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
-                    
-                    val_semantic_pred *= val_bms
-                    del val_inputs
-                    torch.cuda.empty_cache()
-                    
-                    sem_pred, inst_pred, _, votes = postprocess(val_semantic_pred,
-                                                          val_center_pred,
-                                                          val_offsets_pred,
-                                                          compute_voting=True)
-                    votes *= val_bms
-                    max_votes += [votes.max()]
 
-                del val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
+                del val_inputs, val_labels, val_semantic_pred, val_heatmaps, val_offsets, for_dice_outputs, val_bms  # , thresholded_output, curr_preds, gts , val_bms
                 torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
-                metric_mMV = np.mean(max_votes)
                 metric_DSC = dice_metric.aggregate().item()
                 wandb.log({
                     'Segmentation Metrics/nDSC (val)': metric_nDSC, 
-                    'Segmentation Metrics/ DSC (val)': metric_DSC,
-                    'Offsets Metrics/Mean max vote (val)': metric_mMV}, step=epoch)
+                    'Segmentation Metrics/ DSC (val)': metric_DSC,}, step=epoch)
                 
                 metric_values_nDSC.append(metric_nDSC)
                 metric_values_DSC.append(metric_DSC)
 
-                metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp = 0, 0, 0, 0, 0, 0
+                metric_PQ, metric_F1, metric_ltpr, metric_ppv, metric_dic, metric_dice_per_tp, metric_mMV = 0, 0, 0, 0, 0, 0, 0
 
                 if metric_DSC > 0.6:
                     pqs = []
@@ -397,6 +383,7 @@ def main(args):
                     ppvs = []
                     dics = []
                     dice_scores_per_tp = []
+                    max_votes = []
 
                     print(f"Computing instance segmentation metrics! (DSC = {metric_DSC:.4f})")
                     for val_data in tqdm(val_loader):
@@ -422,9 +409,12 @@ def main(args):
                         seg[seg < args.threshold] = 0
                         seg = np.squeeze(seg)
 
-                        sem_pred, inst_pred, _ = postprocess( seg,
-                                                              val_center_pred,
-                                                              val_offsets_pred)
+                        sem_pred, inst_pred, _, votes = postprocess(val_semantic_pred,
+                                                                    val_center_pred,
+                                                                    val_offsets_pred,
+                                                                    compute_voting=True)
+                        votes *= val_bms
+
                         matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
                                                                                    val_instances.squeeze().cpu().numpy())
                         pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
@@ -444,6 +434,7 @@ def main(args):
                         ltprs += [ltpr_val]
                         ppvs += [ppv_val]
                         dics += [dic]
+                        max_votes += [votes.max()]
                         if avg_dice_scores > 0:
                             dice_scores_per_tp += [avg_dice_scores]
 
@@ -453,13 +444,15 @@ def main(args):
                     metric_ppv = np.mean(ppvs)
                     metric_dic = np.mean(dics)
                     metric_dice_per_tp = np.mean(dice_scores_per_tp)
+                    metric_mMV = np.mean(max_votes)
 
                     wandb.log({'Instance Segmentation Metrics/PQ (val)': metric_PQ,
                                'Instance Segmentation Metrics/F1 (val)': metric_F1,
                                'Instance Segmentation Metrics/LTPR (val)': metric_ltpr,
                                'Instance Segmentation Metrics/PPV (val)': metric_ppv,
                                'Instance Segmentation Metrics/DIC (val)': metric_dic,
-                               'Instance Segmentation Metrics/Dice per TP (val)': metric_dice_per_tp
+                               'Instance Segmentation Metrics/Dice per TP (val)': metric_dice_per_tp,
+                               'Offsets Metrics/Mean max vote (val)': metric_mMV
                                }, step=epoch)
 
                 if metric_nDSC > best_metric_nDSC and epoch > 5:
@@ -513,7 +506,6 @@ def main(args):
             'wandb_run_id': wandb_run_id,
             'scheduler': lr_scheduler.state_dict()
         }, checkpoint_filename)
-
 
 
 if __name__ == "__main__":
