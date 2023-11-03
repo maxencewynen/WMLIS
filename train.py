@@ -389,7 +389,7 @@ def main(args):
 
                         val_semantic_pred = act(vsp).cpu().numpy()
                         val_semantic_pred = np.squeeze(val_semantic_pred[0,1]) * val_bms
-                        del val_inputs, for_dice_outputs, val_semantic_pred
+                        del val_inputs, for_dice_outputs
                         torch.cuda.empty_cache()
 
                         seg = val_semantic_pred

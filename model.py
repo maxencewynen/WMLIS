@@ -206,9 +206,9 @@ class PanopticDeepLab3D(nn.Module):
                 oc_decoder_out = self.oc_block2(oc_decoder_out, residual_level2)
                 oc_decoder_out = self.oc_block1(oc_decoder_out, residual_level1)
         
-            semantic_out = sem_decoder_out
-            center_prediction_out = oc_decoder_out[:, :1]
-            offsets_out = oc_decoder_out[:, 1:] * self.scale_offsets
+                semantic_out = sem_decoder_out
+                center_prediction_out = oc_decoder_out[:, :1]
+                offsets_out = oc_decoder_out[:, 1:] * self.scale_offsets
 
             return semantic_out, center_prediction_out, offsets_out
         
