@@ -194,7 +194,7 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         LoadImaged(keys=I + masks),
         AddChanneld(keys=I + masks),
         # Lambdad(keys=non_label_masks, func=lambda x: x.astype(np.uint), allow_missing_keys=True),
-        # NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
+        NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
         # RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
         # RandScaleIntensityd(keys=non_quantitative_images, factors=0.1, prob=1.0),
         BinarizeInstancesd(keys=masks),       
