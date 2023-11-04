@@ -143,16 +143,44 @@ def group_pixels(ctr, offsets, compute_voting=False):
     ctr = ctr.unsqueeze(1)
     ctr_loc = ctr_loc.unsqueeze(0)
 
-    # Compute the Euclidean distance in 3D space
-    distance = torch.norm(ctr - ctr_loc, dim=-1)
+    # Compute the memory needed to store the distance matrix
+    memory_needed = (ctr.shape[0] * ctr_loc.shape[1] * ctr_loc.element_size())
+    free, total = torch.cuda.mem_get_info()
+    if memory_needed < free - 0.5e9:
+        # Compute the Euclidean distance in 3D space
+        distance = torch.norm(ctr - ctr_loc, dim=-1)  # [K, D*H*W]
 
-    # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
-    instance_id = torch.argmin(distance, dim=0).view(1, depth, height, width) + 1
-    del distance, ctr_loc, ctr
-    torch.cuda.empty_cache()
+        # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
+        instance_id = torch.argmin(distance, dim=0).short().view(1, depth, height, width) + 1 # [1, D, H, W]
+        del distance, ctr_loc, ctr
+        torch.cuda.empty_cache()
+    else:
+        total_elements = ctr_loc.shape[1]  # Assuming dim=1 is the element dimension
+        batch_size = 1e6
+        num_batches = (total_elements + batch_size - 1) // batch_size
+
+        # Initialize a list to store the results for each batch
+        instance_id_batches = []
+
+        for batch_idx in range(int(num_batches)):
+            start_idx = int(batch_idx * batch_size)
+            end_idx = int(min((batch_idx + 1) * batch_size, total_elements))
+
+            # Process a batch of elements
+            ctr_loc_batch = ctr_loc[:, start_idx:end_idx]  # Slice along dim=1
+            distance_batch = torch.norm(ctr - ctr_loc_batch, dim=-1)  # [K, batch_size]
+
+            # Find the center with the minimum distance at each voxel, offset by 1
+            instance_id_batch = torch.argmin(distance_batch, dim=0).short() + 1
+            instance_id_batches.append(instance_id_batch)
+
+        # Concatenate the results along the batch dimension
+        instance_id = torch.cat(instance_id_batches, dim=0).view(1, depth, height, width)
+
     if compute_voting:
         return instance_id, torch.squeeze(votes)
     return instance_id
+
 
 
 def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
