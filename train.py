@@ -52,7 +52,7 @@ parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--cache_rate', default=1.0, type=float)
 # logging
 parser.add_argument('--val_interval', type=int, default=5, help='Validation every n-th epochs')
-parser.add_argument('--threshold', type=float, default=0.4, help='Probability threshold')
+parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
 
 parser.add_argument('--wandb_project', type=str, default='WMLSS', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
@@ -139,7 +139,7 @@ def main(args):
     checkpoint_filename = os.path.join(save_dir, 'checkpoint.pth.tar')
     if os.path.exists(checkpoint_filename) and not args.force_restart:
         model = UNet3D(in_channels=len(args.I), num_classes=2).to(device)
-        
+
         checkpoint = torch.load(checkpoint_filename)
 
         start_epoch = checkpoint['epoch']
@@ -165,17 +165,17 @@ def main(args):
         if args.path_model is not None:
             print(f"Retrieving pretrained model from {args.path_model}")
             raise NotImplementedError()
-            model = get_pretrained_model(args.path_model, len(args.I))
+            # model = get_pretrained_model(args.path_model, len(args.I))
         else:
             print(f"Initializing new model with {len(args.I)} input channels")
             model = UNet3D(in_channels=len(args.I), num_classes=2)
-        
+
         model.to(device)
         first_layer_params = model.a_block1.conv1.parameters()
         rest_of_model_params = [p for p in model.parameters() if p not in first_layer_params]
         optimizer = torch.optim.Adam([{'params': first_layer_params, 'lr': args.learning_rate},
              {'params': rest_of_model_params, 'lr': flr}], weight_decay=0.0005) #momentum=0.9,
-        
+
         start_epoch = 0
         wandb.login()
         wandb.init(project=args.wandb_project, mode="online", name=args.name)
@@ -185,9 +185,9 @@ def main(args):
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
 
     # Initialize dataloaders
-    train_loader = get_train_dataloader(data_dir=args.data_dir, 
-                                        num_workers=args.num_workers, 
-                                        I=args.I, 
+    train_loader = get_train_dataloader(data_dir=args.data_dir,
+                                        num_workers=args.num_workers,
+                                        I=args.I,
                                         cache_rate=args.cache_rate,
                                         apply_mask=args.apply_mask,
                                         cp_factor=args.cp_factor)
@@ -242,7 +242,7 @@ def main(args):
 
                 with torch.cuda.amp.autocast():
                     semantic_pred = model(inputs)
-                    
+
                     ### SEGMENTATION LOSS ###
                     # Dice loss
                     dice_loss = loss_function_dice(semantic_pred, labels)
@@ -286,20 +286,12 @@ def main(args):
         lr_scheduler.step()
 
         wandb.log(
-            {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice, 
+            {'Training Loss/Total Loss': epoch_loss, 'Training Segmentation Loss/Dice Loss': epoch_loss_dice,
                 'Training Segmentation Loss/Focal Loss': epoch_loss_ce,
                 #'Training Loss/Segmentation Loss': epoch_loss_seg, 'Training Loss/Center Prediction Loss': epoch_loss_mse,
                 #'Training Loss/Offsets Loss': epoch_loss_l1,
                 'Learning rate': current_lr, },
             step=epoch)
-
-        torch.save({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'wandb_run_id': wandb_run_id,
-            'scheduler': lr_scheduler.state_dict()
-        }, checkpoint_filename)
 
         ##### Validation #####
         if (epoch + 1) % val_interval == 0:
@@ -327,8 +319,8 @@ def main(args):
                                             val_semantic_pred[val_bms == 1])
                     nDSC_list.append(nDSC)
 
-                torch.cuda.empty_cache()
                 del val_inputs, val_labels, val_semantic_pred, for_dice_outputs, val_bms # , thresholded_output, curr_preds, gts , val_bms
+                torch.cuda.empty_cache()
                 metric_nDSC = np.mean(nDSC_list)
                 metric_DSC = dice_metric.aggregate().item()
                 wandb.log({'nDSC Metric/val': metric_nDSC, 'DSC Metric/val': metric_DSC}, step=epoch)
@@ -357,49 +349,56 @@ def main(args):
 
                         val_semantic_pred = inference(val_inputs, model)
 
-                        val_semantic_pred = act(val_semantic_pred)[:, 1]
-                        val_semantic_pred = torch.where(val_semantic_pred >= threshold, torch.tensor(1.0).to(device),
-                                                        torch.tensor(0.0).to(device))
-                        val_semantic_pred = val_semantic_pred.squeeze().cpu().numpy()
-                        for i in range(val_labels.shape[0]): # for every image in batch
-                            sem_pred = val_semantic_pred
-                            inst_pred = postprocess_binary_segmentation(sem_pred)
-                            matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,
-                                                                                           val_instances.squeeze().cpu().numpy())
-                            pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
-                                                      matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
-                                                      unmatched_ref=unmatched_ref)
+                        val_semantic_pred = act(val_semantic_pred).cpu().numpy()
+                        val_semantic_pred = np.squeeze(val_semantic_pred[0, 1]) * val_bms
+                        del val_inputs
+                        torch.cuda.empty_cache()
 
-                            fbeta_val = f_beta_score(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
-                                                     unmatched_ref=unmatched_ref)
-                            ltpr_val = ltpr(matched_pairs=matched_pairs, unmatched_ref=unmatched_ref)
-                            ppv_val = ppv(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred)
-                            dice_scores = dice_per_tp(inst_pred, val_instances.squeeze().cpu().numpy(), matched_pairs)
-                            avg_dice_scores = sum(dice_scores) / len(dice_scores) if dice_scores else 0
-                            dic = DiC(inst_pred, val_instances.squeeze().cpu().numpy())
+                        seg = val_semantic_pred
+                        seg[seg >= args.threshold] = 1
+                        seg[seg < args.threshold] = 0
+                        seg = np.squeeze(seg)
+                        del val_inputs
+                        torch.cuda.empty_cache()
 
-                            pqs += [pq_val]
-                            fbetas += [fbeta_val]
-                            ltprs += [ltpr_val]
-                            ppvs += [ppv_val]
-                            dics += [dic]
-                            if avg_dice_scores > 0:
-                                dice_scores_per_tp += [avg_dice_scores]
+                        sem_pred = val_semantic_pred
+                        inst_pred = postprocess_binary_segmentation(sem_pred)
 
-                        metric_PQ = np.mean(pqs)
-                        metric_F1 = np.mean(fbetas)
-                        metric_ltpr = np.mean(ltprs)
-                        metric_ppv = np.mean(ppvs)
-                        metric_dic = np.mean(dics)
-                        metric_dice_per_tp = np.mean(dice_scores_per_tp)
+                        matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred, val_instances.squeeze().cpu().numpy())
+                        pq_val = panoptic_quality(pred=inst_pred, ref=val_instances.squeeze().cpu().numpy(),
+                                                  matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
+                                                  unmatched_ref=unmatched_ref)
 
-                        wandb.log({'Instance Segmentation Metrics/PQ (val)': metric_PQ,
-                                   'Instance Segmentation Metrics/F1 (val)': metric_F1,
-                                   'Instance Segmentation Metrics/LTPR (val)': metric_ltpr,
-                                   'Instance Segmentation Metrics/PPV (val)': metric_ppv,
-                                   'Instance Segmentation Metrics/DIC (val)': metric_dic,
-                                   'Instance Segmentation Metrics/Dice per TP (val)': metric_dice_per_tp
-                                   }, step=epoch)
+                        fbeta_val = f_beta_score(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
+                                                 unmatched_ref=unmatched_ref)
+                        ltpr_val = ltpr(matched_pairs=matched_pairs, unmatched_ref=unmatched_ref)
+                        ppv_val = ppv(matched_pairs=matched_pairs, unmatched_pred=unmatched_pred)
+                        dice_scores = dice_per_tp(inst_pred, val_instances.squeeze().cpu().numpy(), matched_pairs)
+                        avg_dice_scores = sum(dice_scores) / len(dice_scores) if dice_scores else 0
+                        dic = DiC(inst_pred, val_instances.squeeze().cpu().numpy())
+
+                        pqs += [pq_val]
+                        fbetas += [fbeta_val]
+                        ltprs += [ltpr_val]
+                        ppvs += [ppv_val]
+                        dics += [dic]
+                        if avg_dice_scores > 0:
+                            dice_scores_per_tp += [avg_dice_scores]
+
+                    metric_PQ = np.mean(pqs)
+                    metric_F1 = np.mean(fbetas)
+                    metric_ltpr = np.mean(ltprs)
+                    metric_ppv = np.mean(ppvs)
+                    metric_dic = np.mean(dics)
+                    metric_dice_per_tp = np.mean(dice_scores_per_tp)
+
+                    wandb.log({'Instance Segmentation Metrics/PQ (val)': metric_PQ,
+                               'Instance Segmentation Metrics/F1 (val)': metric_F1,
+                               'Instance Segmentation Metrics/LTPR (val)': metric_ltpr,
+                               'Instance Segmentation Metrics/PPV (val)': metric_ppv,
+                               'Instance Segmentation Metrics/DIC (val)': metric_dic,
+                               'Instance Segmentation Metrics/Dice per TP (val)': metric_dice_per_tp
+                               }, step=epoch)
 
                 if metric_nDSC > best_metric_nDSC and epoch > 5:
                     best_metric_nDSC = metric_nDSC
@@ -422,12 +421,19 @@ def main(args):
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for PQ")
 
-                if metric_DSC > best_metric_F1 and epoch > 5:
+                if metric_F1 > best_metric_F1 and epoch > 5:
                     best_metric_F1 = metric_F1
                     best_metric_epoch_F1 = epoch + 1
                     save_path = os.path.join(save_dir, f"best_F1_{args.name}_seed{args.seed}.pth")
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for F1")
+
+                if metric_mMV > best_metric_mMV and epoch > 5:
+                    best_metric_mMV = metric_F1
+                    best_metric_epoch_mMV = epoch + 1
+                    save_path = os.path.join(save_dir, f"best_mMV_{args.name}_seed{args.seed}.pth")
+                    torch.save(model.state_dict(), save_path)
+                    print("saved new best metric model for mean max votes")
 
                 print(f"current epoch: {epoch + 1} current mean normalized dice: {metric_nDSC:.4f}"
                       f"\nbest mean normalized dice: {best_metric_nDSC:.4f} at epoch: {best_metric_epoch_nDSC}"
@@ -437,6 +443,14 @@ def main(args):
                       )
 
                 dice_metric.reset()
+
+        torch.save({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'wandb_run_id': wandb_run_id,
+            'scheduler': lr_scheduler.state_dict()
+        }, checkpoint_filename)
 
 
 if __name__ == "__main__":

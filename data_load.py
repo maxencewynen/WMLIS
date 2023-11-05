@@ -7,6 +7,7 @@ from os.path import join as pjoin
 from glob import glob
 import re
 from monai.data import CacheDataset, DataLoader
+from monai.data.meta_tensor import MetaTensor
 from monai.transforms import (
     AddChanneld, Compose, LoadImaged, RandCropByPosNegLabeld,
     Spacingd, ToTensord, NormalizeIntensityd, RandFlipd,
@@ -19,6 +20,9 @@ from typing import Callable
 from monai.transforms import MapTransform
 from scipy.ndimage import center_of_mass
 from monai.config import KeysCollection
+from copy import deepcopy
+import nibabel as nib
+import torch.nn.functional as F
 
 DISCARDED_SUBJECTS = []
 QUANTITATIVE_SEQUENCES = ["T1map"]
@@ -38,19 +42,40 @@ class Printer(Callable):
         return arg
 
 
+
 class SaveImageKeysd:
-    def __init__(self, keys, output_dir):
+    def __init__(self, keys, output_dir, suffix=""):
         self.keys = keys
         self.output_dir = output_dir
+        self.suffix = suffix
 
     def __call__(self, data):
         for key in self.keys:
-            image = data[key]
-            filename = os.path.join(self.output_dir, f"{key}.nii.gz")
-            # Assuming you are using NIfTI images
-            # Replace ".nii.gz" with ".png" or ".jpg" if using other formats
-            # Assuming you have SimpleITK or nibabel to save the images
-            image.save(filename)
+            image = deepcopy(data[key])
+
+            if key == "center_heatmap":
+                image = torch.from_numpy(image) if type(image) == np.ndarray else image
+                nms_padding = (3 - 1) // 2
+                ctr_hmp = F.max_pool3d(image, kernel_size=3, stride=1, padding=nms_padding)
+                ctr_hmp[ctr_hmp != image] = 0
+                ctr_hmp[ctr_hmp > 0] = 1
+                image = ctr_hmp
+            if type(image) == torch.Tensor or type(image) == MetaTensor:
+                image = image.cpu().numpy()
+            image = np.squeeze(image)
+            squeeze_dim = 4 if key == "offsets" else 3
+            while len(image.shape) > squeeze_dim:
+                image = image[0,:]
+
+            if key == "offsets":
+                image = image.transpose(1,2,3,0) #itksnap readable
+
+            if self.suffix != "":
+                filename = key + "_" + self.suffix + ".nii.gz"
+            else:
+                filename = key + ".nii.gz"
+            filename = os.path.join(self.output_dir, filename)
+            nib.save(nib.Nifti1Image(image, np.eye(4)), filename)
         return data
 
 
@@ -65,6 +90,21 @@ class Printerd:
             # print(self.message, np.unique(image))
             print(self.message, key, image.dtype)
         return data
+
+
+class BinarizeInstancesd(MapTransform):
+    def __init__(self, keys, out_key="label"):
+        self.keys = keys
+        self.out_key = out_key
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.key_iterator(d):
+            out_key = self.out_key + "_" + key if len(self.keys) > 1 else self.out_key
+            image = deepcopy(data[key])
+            image[image > 0] = 1
+            d[out_key] = image.astype(np.uint8)
+        return d
 
 
 class LesionOffsetTransformd(MapTransform):
@@ -97,10 +137,10 @@ class LesionOffsetTransformd(MapTransform):
 
         data = np.squeeze(data)
 
-        heatmap = np.zeros_like(data)
-        offset_x = np.zeros_like(data)
-        offset_y = np.zeros_like(data)
-        offset_z = np.zeros_like(data)
+        heatmap = np.zeros_like(data, dtype=np.float32)
+        offset_x = np.zeros_like(data, dtype=np.float32)
+        offset_y = np.zeros_like(data, dtype=np.float32)
+        offset_z = np.zeros_like(data, dtype=np.float32)
 
         # Create coordinate grids
         x_grid, y_grid, z_grid = np.meshgrid(np.arange(data.shape[0]),
@@ -149,7 +189,7 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
     if apply_mask:
         masks += [apply_mask]
         non_label_masks += [apply_mask]
-    
+
     other_keys = ["label"]
 
     non_quantitative_images = [i for i in I if i not in QUANTITATIVE_SEQUENCES]
@@ -162,31 +202,32 @@ def get_train_transforms(I=['FLAIR'], apply_mask=None):
         NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
         RandShiftIntensityd(keys=non_quantitative_images, offsets=0.1, prob=1.0),
         RandScaleIntensityd(keys=non_quantitative_images, factors=0.1, prob=1.0),
-        LesionOffsetTransformd(keys="instance_mask"),
+        BinarizeInstancesd(keys=masks),
     ]
     if apply_mask:
         transform_list += [MaskIntensityd(keys=I + masks, mask_key=apply_mask)]
 
     transform_list += [
-            RandCropByPosNegLabeld(keys=I+other_keys,
-                                   label_key="label", image_key=I[0],
-                                   spatial_size=(128, 128, 128), num_samples=32,
-                                   pos=4, neg=1),
-            RandSpatialCropd(keys=I+other_keys,
-                             roi_size=(96, 96, 96),
-                             random_center=True, random_size=False),
-            RandFlipd(keys=I+other_keys, prob=0.5, spatial_axis=(0, 1, 2)),
-            RandRotate90d(keys=I+other_keys, prob=0.5, spatial_axes=(0, 1)),
-            RandRotate90d(keys=I+other_keys, prob=0.5, spatial_axes=(1, 2)),
-            RandRotate90d(keys=I+other_keys, prob=0.5, spatial_axes=(0, 2)),
-            RandAffined(keys=I+["label"],
-                         mode=tuple(['bilinear'] * len(I)) + tuple(['nearest']),
-                         prob=1.0, spatial_size=(96, 96, 96),
-                         rotate_range=(np.pi / 12, np.pi / 12, np.pi / 12),
-                         scale_range=(0.1, 0.1, 0.1), padding_mode='border'),
-            ToTensord(keys=I+other_keys),
-            ConcatItemsd(keys=I, name="image", dim=0)
-        ]
+        RandCropByPosNegLabeld(keys=I + ["instance_mask", "label"],
+                               label_key="label", image_key=I[0],
+                               spatial_size=(128, 128, 128), num_samples=32,
+                               pos=4, neg=1),
+        RandSpatialCropd(keys=I + ["instance_mask", "label"],
+                         roi_size=(96, 96, 96),
+                         random_center=True, random_size=False),
+        RandFlipd(keys=I + ["instance_mask", "label"], prob=0.5, spatial_axis=(0, 1, 2)),
+        RandRotate90d(keys=I + ["instance_mask", "label"], prob=0.5, spatial_axes=(0, 1)),
+        RandRotate90d(keys=I + ["instance_mask", "label"], prob=0.5, spatial_axes=(1, 2)),
+        RandRotate90d(keys=I + ["instance_mask", "label"], prob=0.5, spatial_axes=(0, 2)),
+        RandAffined(keys=I + ["instance_mask", "label"],
+                    mode=tuple(['bilinear'] * len(I)) + ('nearest', 'nearest'),
+                    prob=1.0, spatial_size=(96, 96, 96),
+                    rotate_range=(np.pi / 12, np.pi / 12, np.pi / 12),
+                    scale_range=(0.1, 0.1, 0.1), padding_mode='border'),
+        LesionOffsetTransformd(keys="instance_mask"),
+        ToTensord(keys=I + other_keys),
+        ConcatItemsd(keys=I, name="image", dim=0)
+    ]
     # transform.set_random_state(seed=seed)
 
     return Compose(transform_list)
