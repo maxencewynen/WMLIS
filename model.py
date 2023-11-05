@@ -209,6 +209,7 @@ class PanopticDeepLab3D(nn.Module):
                 torch.nn.init.constant_(m.weight, 1)
                 torch.nn.init.constant_(m.bias, 0)
 
+
 class UNet3D(nn.Module):
     def __init__(self, in_channels, num_classes, level_channels=[64, 128, 256], bottleneck_channel=512)-> None:
         super(UNet3D, self).__init__()
@@ -224,6 +225,7 @@ class UNet3D(nn.Module):
         self.s_block2 = UpConv3DBlock(in_channels=level_channels[2], res_channels=level_channels[1])
         self.s_block1 = UpConv3DBlock(in_channels=level_channels[1], res_channels=level_channels[0], out_channels=num_classes, last_layer=True)
 
+        self._init_parameters()
 
     def forward(self, input):
         # Analysis Pathway
@@ -240,6 +242,14 @@ class UNet3D(nn.Module):
         semantic_out = decoder_out
 
         return semantic_out
+
+    def _init_parameters(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv3d):
+                torch.nn.init.normal_(m.weight, std=0.001)
+            elif isinstance(m, torch.nn.BatchNorm3d):
+                torch.nn.init.constant_(m.weight, 1)
+                torch.nn.init.constant_(m.bias, 0)
 
 
 
