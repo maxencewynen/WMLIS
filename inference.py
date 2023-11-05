@@ -161,19 +161,27 @@ def main(args):
                 # obtain and save predicted center heatmap
                 filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(heatmap_pred, filepath,
+                write_nifti(heatmap_pred.squeeze(), filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
 
-            if not args.semantic_model:
                 # obtain and save predicted offsets
                 filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(torch.squeeze(offsets_pred).cpu().numpy(), filepath,
+                write_nifti((torch.squeeze(offsets_pred).cpu().numpy() * seg).transpose((1,2,3,0)), filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
+            
+                # obtain and save predicted offsets
+                filename = filename_or_obj[:14] + "_pred-centers.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(instance_centers, filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
+
 
             # obtain and save predicted offsets
             filename = filename_or_obj[:14] + "_pred-instances.nii.gz"
@@ -183,18 +191,10 @@ def main(args):
                         target_affine=affine,
                         output_spatial_shape=spatial_shape)
 
-            # obtain and save predicted offsets
-            filename = filename_or_obj[:14] + "_pred-centers.nii.gz"
-            filepath = os.path.join(path_pred, filename)
-            write_nifti(instance_centers, filepath,
-                        affine=original_affine,
-                        target_affine=affine,
-                        output_spatial_shape=spatial_shape)
-
             if args.compute_voting:
                 filename = filename_or_obj[:14] + "_voting-image.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(voting_image, filepath,
+                write_nifti(voting_image * seg, filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
