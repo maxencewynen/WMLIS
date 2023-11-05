@@ -354,13 +354,6 @@ def main(args):
                         del val_inputs
                         torch.cuda.empty_cache()
 
-                        seg = val_semantic_pred
-                        seg[seg >= args.threshold] = 1
-                        seg[seg < args.threshold] = 0
-                        seg = np.squeeze(seg)
-                        del val_inputs
-                        torch.cuda.empty_cache()
-
                         sem_pred = val_semantic_pred
                         inst_pred = postprocess_binary_segmentation(sem_pred)
 
