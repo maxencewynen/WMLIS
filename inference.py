@@ -44,6 +44,8 @@ parser.add_argument('--semantic_model', action="store_true", default=False,
                     help="Whether the model to be loaded is a semantic model or not")
 parser.add_argument('--separate_decoders', action="store_true", default=False,
                     help="Whether the model has separate decoders or not")
+parser.add_argument('--offsets_scale', type=int, default=1, help="Scale to multiply the offsets with")
+
 
 
 def get_default_device():
@@ -105,7 +107,7 @@ def main(args):
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
                 heatmap_pred = heatmap_pred.half()
-                offsets_pred = offsets_pred.half()
+                offsets_pred = offsets_pred.half() * args.offsets_scale
             else:
                 semantic_pred = outputs
 

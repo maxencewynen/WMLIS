@@ -355,6 +355,7 @@ def compute_metrics(args):
         return
 
     metrics_dict = {"Subject_ID": [], "File": []}
+    if args.dsc or args.all: metrics_dict["DSC"] = []
     if args.pq or args.all: metrics_dict["PQ"] = []
     if args.fbeta or args.all: metrics_dict["Fbeta"] = []
     if args.ltpr or args.all: metrics_dict["LTPR"] = []
@@ -364,9 +365,12 @@ def compute_metrics(args):
     if args.ref_count or args.all: metrics_dict["Ref_Lesion_Count"] = []
     if args.dic or args.all: metrics_dict["DiC"] = []
     if args.clr or args.all: metrics_dict["CLR"] = []
+    if args.dice_per_tp_cl or args.all: metrics_dict["Dice_Per_TP_CL"] = []
+    if args.clm or args.all: metrics_dict["CLM"] = []
 
     dd = "test" if args.test else "val"
     ref_dir = os.path.join(args.ref_path, dd, "labels")
+    
     for ref_file in os.listdir(ref_dir):
         if ref_file.endswith("mask-instances.nii.gz"):
             print(ref_file)
@@ -387,6 +391,9 @@ def compute_metrics(args):
 
             metrics_dict["Subject_ID"].append(subj_id)
             metrics_dict["File"].append(pred_file)
+            if args.dsc or args.all:
+                dsc = dice_metric(ref_img, pred_img)
+                metrics_dict["DSC"].append(dsc)
             if args.pq or args.all:
                 pq_val = panoptic_quality(pred=pred_img, ref=ref_img,
                                           matched_pairs=matched_pairs, unmatched_pred=unmatched_pred,
@@ -416,11 +423,14 @@ def compute_metrics(args):
             if args.clr or args.clm or args.dice_per_tp_cl or args.all:
                 confluents_ref_img = np.copy(ref_img)
                 cl_ids = find_confluent_lesions(confluents_ref_img)
+
                 # set all other ids to 0 in ref_img
                 for id in np.unique(confluents_ref_img):
                     if id not in cl_ids:
                         confluents_ref_img[confluents_ref_img == id] = 0
+
                 matched_pairs_cl, unmatched_pred_cl, unmatched_ref_cl = match_instances(pred_img, confluents_ref_img)
+
                 if args.clr or args.all:
                     clr = ltpr(matched_pairs=matched_pairs_cl, unmatched_ref=unmatched_ref_cl)
                     metrics_dict["CLR"].append(clr)
@@ -445,6 +455,7 @@ if __name__ == "__main__":
     parser.add_argument("--ref_path", required=True,
                         help="Path to the directory with reference files (containing val/ and test/).")
     parser.add_argument("--test", action="store_true", help="Wether to use the test data or not. Default is val data.")
+    parser.add_argument("--dsc", action="store_true", help="Compute Dice Score (DSC).")
     parser.add_argument("--pq", action="store_true", help="Compute Panoptic Quality (PQ).")
     parser.add_argument("--fbeta", action="store_true", help="Compute F-beta score.")
     parser.add_argument("--ltpr", action="store_true", help="Compute Lesion True Positive Rate (LTPR).")
