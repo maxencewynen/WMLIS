@@ -44,6 +44,8 @@ parser.add_argument('--semantic_model', action="store_true", default=False,
                     help="Whether the model to be loaded is a semantic model or not")
 parser.add_argument('--separate_decoders', action="store_true", default=False,
                     help="Whether the model has separate decoders or not")
+parser.add_argument('--offsets_scale', type=int, default=1, help="Scale to multiply the offsets with")
+
 
 
 def get_default_device():
@@ -104,7 +106,7 @@ def main(args):
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
                 heatmap_pred = heatmap_pred.half()
-                offsets_pred = offsets_pred.half()
+                offsets_pred = offsets_pred.half() * args.offsets_scale
             else:
                 semantic_pred = outputs
 
@@ -158,19 +160,27 @@ def main(args):
                 # obtain and save predicted center heatmap
                 filename = filename_or_obj[:14] + "_pred-heatmap.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(heatmap_pred, filepath,
+                write_nifti(heatmap_pred.squeeze(), filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
 
-            if not args.semantic_model:
                 # obtain and save predicted offsets
                 filename = filename_or_obj[:14] + "_pred-offsets.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(torch.squeeze(offsets_pred).cpu().numpy(), filepath,
+                write_nifti((torch.squeeze(offsets_pred).cpu().numpy() * seg).transpose((1,2,3,0)), filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
+            
+                # obtain and save predicted offsets
+                filename = filename_or_obj[:14] + "_pred-centers.nii.gz"
+                filepath = os.path.join(path_pred, filename)
+                write_nifti(instance_centers, filepath,
+                            affine=original_affine,
+                            target_affine=affine,
+                            output_spatial_shape=spatial_shape)
+
 
                 # obtain and save predicted offsets
                 filename = filename_or_obj[:14] + "_pred-centers.nii.gz"
@@ -191,7 +201,7 @@ def main(args):
             if args.compute_voting:
                 filename = filename_or_obj[:14] + "_voting-image.nii.gz"
                 filepath = os.path.join(path_pred, filename)
-                write_nifti(voting_image, filepath,
+                write_nifti(voting_image * seg, filepath,
                             affine=original_affine,
                             target_affine=affine,
                             output_spatial_shape=spatial_shape)
