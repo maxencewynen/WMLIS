@@ -428,12 +428,6 @@ def main(args):
                     torch.save(model.state_dict(), save_path)
                     print("saved new best metric model for F1")
 
-                if metric_mMV > best_metric_mMV and epoch > 5:
-                    best_metric_mMV = metric_F1
-                    best_metric_epoch_mMV = epoch + 1
-                    save_path = os.path.join(save_dir, f"best_mMV_{args.name}_seed{args.seed}.pth")
-                    torch.save(model.state_dict(), save_path)
-                    print("saved new best metric model for mean max votes")
 
                 print(f"current epoch: {epoch + 1} current mean normalized dice: {metric_nDSC:.4f}"
                       f"\nbest mean normalized dice: {best_metric_nDSC:.4f} at epoch: {best_metric_epoch_nDSC}"
