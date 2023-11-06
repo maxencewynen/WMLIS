@@ -366,7 +366,8 @@ def compute_metrics(args):
     if args.dic or args.all: metrics_dict["DiC"] = []
     if args.clr or args.all: metrics_dict["CLR"] = []
     if args.dice_per_tp_cl or args.all: metrics_dict["Dice_Per_TP_CL"] = []
-    if args.clm or args.all: metrics_dict["CLM"] = []
+    #if args.clm or args.all: metrics_dict["CLM"] = []
+    metrics_dict["CL_Count"] = []
 
     dd = "test" if args.test else "val"
     ref_dir = os.path.join(args.ref_path, dd, "labels")
@@ -392,7 +393,7 @@ def compute_metrics(args):
             metrics_dict["Subject_ID"].append(subj_id)
             metrics_dict["File"].append(pred_file)
             if args.dsc or args.all:
-                dsc = dice_metric(ref_img, pred_img)
+                dsc = dice_metric((ref_img > 0).astype(np.uint8), (pred_img > 0).astype(np.uint8))
                 metrics_dict["DSC"].append(dsc)
             if args.pq or args.all:
                 pq_val = panoptic_quality(pred=pred_img, ref=ref_img,
@@ -420,7 +421,7 @@ def compute_metrics(args):
                 metrics_dict["Ref_Lesion_Count"].append(ref_lesion_count(ref_img))
             if args.dic or args.all:
                 metrics_dict["DiC"].append(DiC(pred_img, ref_img))
-            if args.clr or args.clm or args.dice_per_tp_cl or args.all:
+            if args.clr or args.dice_per_tp_cl or args.all:
                 confluents_ref_img = np.copy(ref_img)
                 cl_ids = find_confluent_lesions(confluents_ref_img)
 
@@ -430,18 +431,23 @@ def compute_metrics(args):
                         confluents_ref_img[confluents_ref_img == id] = 0
 
                 matched_pairs_cl, unmatched_pred_cl, unmatched_ref_cl = match_instances(pred_img, confluents_ref_img)
-
+        
+                clm = len(cl_ids)
+                metrics_dict["CL_Count"].append(clm)
                 if args.clr or args.all:
-                    clr = ltpr(matched_pairs=matched_pairs_cl, unmatched_ref=unmatched_ref_cl)
-                    metrics_dict["CLR"].append(clr)
+                    if clm == 0:
+                        metrics_dict["CLR"].append(np.nan)
+                    else:
+                        clr = ltpr(matched_pairs=matched_pairs_cl, unmatched_ref=unmatched_ref_cl)
+                        metrics_dict["CLR"].append(clr)
                 if args.dice_per_tp_cl or args.all:
-                    dice_scores = dice_per_tp(pred_img, confluents_ref_img, matched_pairs_cl)
-                    # Assuming you want the average Dice score per subject
-                    avg_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0
-                    metrics_dict["Dice_Per_TP_CL"].append(avg_dice)
-                if args.clm or args.all:
-                    clm = len(cl_ids)
-                    metrics_dict["CLM"].append(clm)
+                    if clm == 0:
+                        metrics_dict["Dice_Per_TP_CL"].append(np.nan)
+                    else:
+                        dice_scores = dice_per_tp(pred_img, confluents_ref_img, matched_pairs_cl)
+                        # Assuming you want the average Dice score per subject
+                        avg_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0
+                        metrics_dict["Dice_Per_TP_CL"].append(avg_dice)
 
     model_name = os.path.basename(os.path.dirname(args.pred_path))
     # Convert dictionary to dataframe and save as CSV

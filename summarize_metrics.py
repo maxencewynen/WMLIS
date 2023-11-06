@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 
 # Base directory
 base_dir = r'/dir/scratchL/mwynen/data/cusl_wml/predictions'
@@ -18,10 +19,15 @@ def summarize_metrics(base_dir, test=False):
         
         if os.path.exists(file_path):
             df = pd.read_csv(file_path)
+            all_metrics = ['DSC', 'PQ', 'Fbeta', 'LTPR', 'PPV', 'Dice_Per_TP', 'DiC', 'CLR', 'Dice_Per_TP_CL', 
+                    'Pred_Lesion_Count','Ref_Lesion_Count', 'CL_Count']
+            for metric in all_metrics:
+                if metric not in list(df.columns):
+                    df[metric] = np.nan
             
             # Calculate mean for each metric
-            mean_values = df[['PQ', 'Fbeta', 'LTPR', 'PPV', 'Dice_Per_TP', 'DiC']].mean().to_dict()
-            sum_values = df[['Pred_Lesion_Count','Ref_Lesion_Count']].sum().to_dict()
+            mean_values = df[['DSC', 'PQ', 'Fbeta', 'LTPR', 'PPV', 'Dice_Per_TP', 'DiC', 'CLR', 'Dice_Per_TP_CL']].mean().to_dict()
+            sum_values = df[['Pred_Lesion_Count','Ref_Lesion_Count', 'CL_Count']].sum().to_dict()
             
             mean_values.update(sum_values)
 
@@ -32,7 +38,6 @@ def summarize_metrics(base_dir, test=False):
 
     # Convert the dictionary to a DataFrame and write it to CSV
     mean_df = pd.DataFrame.from_dict(model_mean_metrics, orient='index').round(3)
-    mean_df.to_csv(os.path.join(base_dir, 'model_mean_metrics.csv'))
     mean_df.to_csv(os.path.join(base_dir, 'model_mean_metrics.csv'))
 
     print("Model mean metrics saved to 'model_mean_metrics.csv'")
