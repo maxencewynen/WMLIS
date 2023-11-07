@@ -34,7 +34,7 @@ def process_file(file_path, directory, threshold=0.35):
     image_data = img.get_fdata()
 
     binary_image_data = np.where(image_data > threshold, 1, 0)
-    binary_seg_filename = file_path.replace('_pred-prob.nii.gz', '_seg-binary.nii.gz')
+    binary_seg_filename = file_path.replace(file_path[-16:], 'seg-binary.nii.gz')
     nib.save(nib.Nifti1Image(binary_image_data.astype(np.uint8), img.affine), binary_seg_filename)
 
     mask = image_data > threshold
@@ -53,7 +53,7 @@ def process_file(file_path, directory, threshold=0.35):
         find_nearest_lesion_labels(unlabelled_voxels_indices, lesion_clusters)
 
     clustered_img = nib.Nifti1Image(lesion_clusters, img.affine)
-    new_name = file_path.replace('_pred-prob.nii.gz', '_pred-instances.nii.gz')
+    new_name = file_path.replace(file_path[-16:], 'pred-instances.nii.gz')
     new_full_path = os.path.join(directory, new_name)
 
     nib.save(clustered_img, new_full_path)
@@ -61,8 +61,8 @@ def process_file(file_path, directory, threshold=0.35):
     num_lesion_centers = len(np.unique(lesion_clusters)) - 1
     print(f"Processed {file_path}: Number of identified lesion centers: {num_lesion_centers}")
 
-def process_files(directory, threshold=0.35):
-    files = [f for f in os.listdir(directory) if f.endswith('_pred-prob.nii.gz')]
+def process_files(directory, threshold=0.5):
+    files = [f for f in os.listdir(directory) if f.endswith('prob.nii.gz')]
     file_paths = [os.path.join(directory, f) for f in sorted(files)]
 
     with Pool(processes=8) as pool:
