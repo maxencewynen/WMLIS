@@ -7,6 +7,7 @@ from skimage.measure import label
 from scipy.spatial import distance_matrix
 from multiprocessing import Pool
 from scipy.spatial.distance import cdist
+from postprocessing import remove_connected_components
 
 def compute_hessian_eigenvalues(image):
     hessian_matrices = hessian_matrix(image, sigma=1, use_gaussian_derivatives=False)
@@ -38,6 +39,7 @@ def process_file(file_path, directory, threshold=0.35):
     nib.save(nib.Nifti1Image(binary_image_data.astype(np.uint8), img.affine), binary_seg_filename)
 
     mask = image_data > threshold
+    mask = remove_connected_components(segmentation)
     masked_image_data = np.where(mask, image_data, 0)
 
     eigenvalues = compute_hessian_eigenvalues(masked_image_data)
