@@ -43,7 +43,7 @@ def remove_connected_components(segmentation, l_min=9):
     return seg2
 
 
-def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=200):
+def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
     """
     from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
     Find the center points from the center heatmap.
@@ -72,7 +72,18 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=200):
     assert len(ctr_hmp.size()) == 3, 'Something is wrong with center heatmap dimension.'
 
     # find non-zero elements
+    nonzeros = (ctr_hmp > 0).short()
+    centers_labeled, num_centers = label(nonzeros.cpu().numpy())
+    centers_labeled = torch.from_numpy(centers_labeled).to(nonzeros.device)
+    for c in num_centers[1:]:
+        coords_cx, coords_cy, coords_cz = torch.where(centers_labeled == c)
+        if len(coords_cx) > 1:
+            coord_to_keep = np.random.choice(list(range(len(coords_cx))))
+            for i in range(len(coords_cx)):
+                if i != coord_to_keep:
+                    ctr_hmp[coords_cx[i], coords_cy[i], coords_cz[i]] = -1
     ctr_all = torch.nonzero(ctr_hmp > 0).short()
+
     if top_k is None:
         return ctr_all
     elif ctr_all.size(0) < top_k:
