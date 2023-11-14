@@ -193,6 +193,40 @@ def group_pixels(ctr, offsets, compute_voting=False):
     return instance_id
 
 
+def refine_instance_segmentation(instance_mask, l_min=9):
+    """
+    Refines the instance segmentation by relabeling disconnected components in instances
+    and removing instances smaller than l_min
+    Args:
+        instance_maks: np.ndarray of dimension (H,W,D), array of instance ids
+        l_min: minimum lesion size
+    """
+    iids = np.unique(instance_mask)[1:]
+    max_instance_id = np.max(instance_mask)
+    # for every instance id
+    for iid in iids:
+        # get the mask
+        mask = (instance_mask == iid)
+        components, n_components = label(mask)
+        if n_components > 1: # if the lesion is split in n components
+            for cid in range(1, n_components + 1): # go through each component
+                component_mask = (components == cid)
+                this_component_id = iid
+                if cid != n_components: # skip relabeling the last one
+                    instance_mask[component_mask] = max_instance_id + 1
+                    max_instance_id += 1
+                    this_component_id = max_instance_id
+                if np.sum(component_mask) < l_min: # check if lesion size is too small or not
+                    instance_mask[component_mask] = 0
+                    instance_mask[instance_mask == max_instance_id] = this_component_id
+                    max_instance_id -= 1
+
+        elif np.sum(mask) < l_min: # check if lesion size is too small or not
+            instance_mask[mask] = 0
+            instance_mask[instance_mask == max_instance_id] = iid
+            max_instance_id -= 1
+    return instance_mask
+
 
 def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1):
     """
