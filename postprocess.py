@@ -75,7 +75,7 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
     nonzeros = (ctr_hmp > 0).short()
     centers_labeled, num_centers = label(nonzeros.cpu().numpy())
     centers_labeled = torch.from_numpy(centers_labeled).to(nonzeros.device)
-    for c in num_centers[1:]:
+    for c in list(range(1,num_centers+1)):
         coords_cx, coords_cy, coords_cz = torch.where(centers_labeled == c)
         if len(coords_cx) > 1:
             coord_to_keep = np.random.choice(list(range(len(coords_cx))))
