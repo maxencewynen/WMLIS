@@ -183,7 +183,7 @@ def group_pixels(ctr, offsets, compute_voting=False):
 
 
 
-def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
+def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1):
     """
     Postprocesses the semantic mask, center heatmap and the offsets.
     Arguments:
@@ -202,7 +202,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False):
     assert len(np.unique(semantic_mask)) <= 2, "Semantic mask should be binary"
     semantic_mask = remove_connected_components(semantic_mask)
 
-    instance_centers = find_instance_center(heatmap)
+    instance_centers = find_instance_center(heatmap, threshold=heatmap_threshold)
 
     instance_ids = group_pixels(instance_centers, offsets, compute_voting=compute_voting)
     if compute_voting:

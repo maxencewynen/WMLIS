@@ -45,6 +45,7 @@ parser.add_argument('--semantic_model', action="store_true", default=False,
 parser.add_argument('--separate_decoders', action="store_true", default=False,
                     help="Whether the model has separate decoders or not")
 parser.add_argument('--offsets_scale', type=int, default=1, help="Scale to multiply the offsets with")
+parser.add_argument('--heatmap_threshold', type=float, default=0.1, help="Threshold to discard small centers in the predicted heatmap")
 
 
 
@@ -141,9 +142,10 @@ def main(args):
             seg = np.squeeze(seg)
             if args.compute_voting:
                 seg, instances_pred, instance_centers, voting_image = postprocess(seg, heatmap_pred, offsets_pred,
-                                                                                  compute_voting=args.compute_voting)
+                                                                                  compute_voting=args.compute_voting, 
+                                                                                  heatmap_threshold=args.heatmap_threshold)
             elif not args.semantic_model:
-                seg, instances_pred, instance_centers = postprocess(seg, heatmap_pred, offsets_pred)
+                seg, instances_pred, instance_centers = postprocess(seg, heatmap_pred, offsets_pred, heatmap_threshold=args.heatmap_threshold)
             else:
                 seg = remove_connected_components(seg)
                 instances_pred = postprocess_binary_segmentation(seg)
