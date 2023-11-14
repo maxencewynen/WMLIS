@@ -58,8 +58,7 @@ def get_default_device():
 
 
 def main(args):
-    assert (
-                       args.semantic_model and not args.compute_voting) or not args.semantic_model, "cannot compute votings if semantic model"
+    assert (args.semantic_model and not args.compute_voting) or not args.semantic_model, "cannot compute votings if semantic model"
     os.makedirs(args.path_pred, exist_ok=True)
     device = get_default_device()
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -78,7 +77,7 @@ def main(args):
     os.makedirs(path_pred, exist_ok=True)
 
     if not args.semantic_model:
-        model = PanopticDeepLab3D(in_channels, num_classes=2, separate_decoders=args.separate_decoders)
+        model = PanopticDeepLab3D(in_channels, num_classes=2, separate_decoders=args.separate_decoders, scale_offsets=args.offsets_scale)
     else:
         model = UNet3D(in_channels, num_classes=2)
     model.load_state_dict(torch.load(args.path_model))
@@ -107,7 +106,7 @@ def main(args):
                 semantic_pred = act(semantic_pred).cpu().numpy()
                 semantic_pred = np.squeeze(semantic_pred[0, 1])
                 heatmap_pred = heatmap_pred.half()
-                offsets_pred = offsets_pred.half() * args.offsets_scale
+                offsets_pred = offsets_pred.half() 
             else:
                 semantic_pred = outputs
 
