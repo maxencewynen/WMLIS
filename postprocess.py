@@ -38,8 +38,8 @@ def remove_connected_components(segmentation, l_min=9):
         if n_el > l_min:
             current_voxels = np.stack(np.where(labeled_seg == i_el), axis=1)
             seg2[current_voxels[:, 0],
-                 current_voxels[:, 1],
-                 current_voxels[:, 2]] = 1
+            current_voxels[:, 1],
+            current_voxels[:, 2]] = 1
     return seg2
 
 
@@ -75,7 +75,7 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
     nonzeros = (ctr_hmp > 0).short()
     centers_labeled, num_centers = label(nonzeros.cpu().numpy())
     centers_labeled = torch.from_numpy(centers_labeled).to(nonzeros.device)
-    for c in list(range(1,num_centers+1)):
+    for c in list(range(1, num_centers + 1)):
         coords_cx, coords_cy, coords_cz = torch.where(centers_labeled == c)
         if len(coords_cx) > 1:
             coord_to_keep = np.random.choice(list(range(len(coords_cx))))
@@ -93,11 +93,11 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
         top_k_scores, _ = torch.topk(torch.flatten(ctr_hmp), top_k)
         return torch.nonzero(ctr_hmp > top_k_scores[-1]).short()
 
+
 def make_votes_readable(votes):
     votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
     votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
-    return votes*100
-    
+    return votes * 100
 
 
 def group_pixels(ctr, offsets, compute_voting=False):
@@ -119,11 +119,11 @@ def group_pixels(ctr, offsets, compute_voting=False):
 
     # generates a 3D coordinate map, where each location is the coordinate of that loc
     z_coord, y_coord, x_coord = torch.meshgrid(
-            torch.arange(depth),
-            torch.arange(height),
-            torch.arange(width),
-            indexing="ij"
-    )	  
+        torch.arange(depth),
+        torch.arange(height),
+        torch.arange(width),
+        indexing="ij"
+    )
     z_coord = z_coord[None, :].to(offsets.device)
     y_coord = y_coord[None, :].to(offsets.device)
     x_coord = x_coord[None, :].to(offsets.device)
@@ -145,13 +145,15 @@ def group_pixels(ctr, offsets, compute_voting=False):
         votes = torch.zeros(1, votes.shape[1], votes.shape[2], votes.shape[3], dtype=torch.long, device=votes.device)
         # Use advanced indexing to set counts in the result tensor
         votes[0, unique_coords[0], unique_coords[1], unique_coords[2]] = counts
-    
+
     if ctr.shape[0] == 0:
-        if compute_voting: return torch.zeros_like(coord), torch.squeeze(votes)
-        else: return torch.zeros_like(coord)
+        if compute_voting:
+            return torch.zeros_like(coord), torch.squeeze(votes)
+        else:
+            return torch.zeros_like(coord)
 
     ctr_loc = ctr_loc.view(3, depth * height * width).transpose(1, 0)
-    
+
     del z_coord, y_coord, x_coord, coord
     torch.cuda.empty_cache()
 
@@ -168,7 +170,7 @@ def group_pixels(ctr, offsets, compute_voting=False):
         distance = torch.norm(ctr - ctr_loc, dim=-1)  # [K, D*H*W]
 
         # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
-        instance_id = torch.argmin(distance, dim=0).short().view(1, depth, height, width) + 1 # [1, D, H, W]
+        instance_id = torch.argmin(distance, dim=0).short().view(1, depth, height, width) + 1  # [1, D, H, W]
         del distance, ctr_loc, ctr
         torch.cuda.empty_cache()
     else:
@@ -214,24 +216,38 @@ def refine_instance_segmentation(instance_mask, l_min=9):
         # get the mask
         mask = (instance_mask == iid)
         components, n_components = label(mask)
-        if n_components > 1: # if the lesion is split in n components
-            for cid in range(1, n_components + 1): # go through each component
+        if n_components > 1:  # if the lesion is split in n components
+            for cid in range(1, n_components + 1):  # go through each component
                 component_mask = (components == cid)
                 this_component_id = iid
-                if cid != n_components: # skip relabeling the last one
+                if cid != n_components:  # skip relabeling the last one
                     instance_mask[component_mask] = max_instance_id + 1
                     max_instance_id += 1
                     this_component_id = max_instance_id
-                if np.sum(component_mask) < l_min: # check if lesion size is too small or not
+                if np.sum(component_mask) < l_min:  # check if lesion size is too small or not
                     instance_mask[component_mask] = 0
                     instance_mask[instance_mask == max_instance_id] = this_component_id
                     max_instance_id -= 1
 
-        elif np.sum(mask) < l_min: # check if lesion size is too small or not
+        elif np.sum(mask) < l_min:  # check if lesion size is too small or not
             instance_mask[mask] = 0
             instance_mask[instance_mask == max_instance_id] = iid
             max_instance_id -= 1
     return instance_mask
+
+
+def calibrate_offsets(offsets, centers):
+    """
+    Calibrates the offsets by subtracting the mean offset at center locations
+    Args:
+        offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output, where N is the batch size,
+        centers: Binary np.ndarray of dimension (H, W, D), array of centers
+    """
+    bias_x, bias_y, bias_z = np.mean(offsets[centers == 1], axis=0)
+    offsets[0, :, :, :] = offsets[0, :, :, :] - bias_x
+    offsets[1, :, :, :] = offsets[1, :, :, :] - bias_y
+    offsets[2, :, :, :] = offsets[2, :, :, :] - bias_z
+    return offsets
 
 
 def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1):
@@ -255,6 +271,12 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
 
     instance_centers = find_instance_center(heatmap, threshold=heatmap_threshold)
 
+    centers_mx = np.zeros_like(semantic_mask)
+    ic = instance_centers.cpu().numpy()
+    centers_mx[ic[:, 0], ic[:, 1], ic[:, 2]] = 1
+
+    offsets = calibrate_offsets(offsets, centers_mx)
+
     instance_ids = group_pixels(instance_centers, offsets, compute_voting=compute_voting)
     if compute_voting:
         instance_ids, voting_image = instance_ids
@@ -262,10 +284,6 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
         voting_image = None
 
     instance_mask = np.squeeze(instance_ids.cpu().numpy().astype(np.int32)) * semantic_mask
-    
-    centers_mx = np.zeros_like(semantic_mask)
-    instance_centers = instance_centers.cpu().numpy()
-    centers_mx[instance_centers[:, 0], instance_centers[:, 1], instance_centers[:, 2]] = 1
 
     ret = (instance_mask, centers_mx.astype(np.uint8))
     ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()
@@ -285,4 +303,3 @@ if __name__ == "__main__":
         compute_all_voting_image(path_pred=args.path_pred)
     else:
         print("Nothing asked, nothing done.")
-
