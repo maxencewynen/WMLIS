@@ -118,9 +118,15 @@ def group_pixels(ctr, offsets, compute_voting=False):
     depth, height, width = offsets.size()[1:]
 
     # generates a 3D coordinate map, where each location is the coordinate of that loc
-    z_coord = torch.arange(depth, dtype=torch.float16, device=offsets.device).unsqueeze(1).unsqueeze(2).repeat(1, height, width).unsqueeze(0)
-    y_coord = torch.arange(height, dtype=torch.float16, device=offsets.device).unsqueeze(0).unsqueeze(2).repeat(depth, 1, width).unsqueeze(0)
-    x_coord = torch.arange(width, dtype=torch.float16, device=offsets.device).unsqueeze(0).unsqueeze(1).repeat(depth, height, 1).unsqueeze(0)
+    z_coord, y_coord, x_coord = torch.meshgrid(
+            torch.arange(depth),
+            torch.arange(height),
+            torch.arange(width),
+            indexing="ij"
+    )	  
+    z_coord = z_coord[None, :].to(offsets.device)
+    y_coord = y_coord[None, :].to(offsets.device)
+    x_coord = x_coord[None, :].to(offsets.device)
 
     coord = torch.cat((z_coord, y_coord, x_coord), dim=0)
 
