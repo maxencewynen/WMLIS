@@ -240,13 +240,13 @@ def calibrate_offsets(offsets, centers):
     """
     Calibrates the offsets by subtracting the mean offset at center locations
     Args:
-        offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output, where N is the batch size,
+        offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output, where N is the batch size (N=1 expected)
         centers: Binary np.ndarray of dimension (H, W, D), array of centers
     """
-    bias_x, bias_y, bias_z = np.mean(offsets[centers == 1], axis=0)
-    offsets[0, :, :, :] = offsets[0, :, :, :] - bias_x
-    offsets[1, :, :, :] = offsets[1, :, :, :] - bias_y
-    offsets[2, :, :, :] = offsets[2, :, :, :] - bias_z
+    bias_x, bias_y, bias_z = torch.mean(offsets[:,:,centers == 1], axis=2).squeeze()
+    offsets[:, 0, :, :, :] = offsets[:, 0, :, :, :] - bias_x
+    offsets[:, 1, :, :, :] = offsets[:, 1, :, :, :] - bias_y
+    offsets[:, 2, :, :, :] = offsets[:, 2, :, :, :] - bias_z
     return offsets
 
 
