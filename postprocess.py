@@ -52,9 +52,9 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
             for consistent, we only support N=1.
         threshold: A Float, threshold applied to center heatmap score.
         nms_kernel: An Integer, NMS max pooling kernel size.
-        top_k: An Integer, top k centers to keep.
+        top_k: An Integer, top k centers to keep. If None, all centers > threshold are kept
     Returns:
-        A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (z, y, x).
+        A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (x, y, z).
     """
     if ctr_hmp.size(0) != 1:
         raise ValueError('Only supports inference for batch size = 1')
@@ -73,15 +73,25 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
 
     # find non-zero elements
     nonzeros = (ctr_hmp > 0).short()
+    
+    # Find clusters of centers to consider them as one center instead of two
     centers_labeled, num_centers = label(nonzeros.cpu().numpy())
     centers_labeled = torch.from_numpy(centers_labeled).to(nonzeros.device)
     for c in list(range(1, num_centers + 1)):
         coords_cx, coords_cy, coords_cz = torch.where(centers_labeled == c)
-        if len(coords_cx) > 1:
+        
+        # if center is made of two voxels or more 
+        if len(coords_cx) > 1: 
+            # keep only one center voxel at random, since all of them have the same probability
+            # of being a center
             coord_to_keep = np.random.choice(list(range(len(coords_cx))))
+
+            # set all the other center voxels to zero
             for i in range(len(coords_cx)):
                 if i != coord_to_keep:
                     ctr_hmp[coords_cx[i], coords_cy[i], coords_cz[i]] = -1
+    
+    # Make the list of centers from the updated ctr_hmp
     ctr_all = torch.nonzero(ctr_hmp > 0).short()
 
     if top_k is None:
@@ -102,7 +112,7 @@ def make_votes_readable(votes):
 
 def group_pixels(ctr, offsets, compute_voting=False):
     """
-    from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
+    Inspired from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
     Gives each pixel in the image an instance id.
     Arguments:
         ctr: A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (z, y, x).
@@ -216,18 +226,18 @@ def refine_instance_segmentation(instance_mask, l_min=9):
         # get the mask
         mask = (instance_mask == iid)
         components, n_components = label(mask)
-        if n_components > 1:  # if the lesion is split in n components
-            for cid in range(1, n_components + 1):  # go through each component
+        if n_components > 1: # if the lesion is split in n components
+            biggest_lesion_size = 0
+            biggest_lesion_id = -1
+            for cid in range(1, n_components + 1): # go through each component
                 component_mask = (components == cid)
-                this_component_id = iid
-                if cid != n_components:  # skip relabeling the last one
-                    instance_mask[component_mask] = max_instance_id + 1
-                    max_instance_id += 1
-                    this_component_id = max_instance_id
-                if np.sum(component_mask) < l_min:  # check if lesion size is too small or not
-                    instance_mask[component_mask] = 0
-                    instance_mask[instance_mask == max_instance_id] = this_component_id
-                    max_instance_id -= 1
+                this_size = np.sum(component_mask)
+                if this_size > biggest_lesion_size:
+                    biggest_lesion_size = this_size
+                    biggest_lesion_id = cid
+            for cid in range(1, n_components + 1):
+                if cid == biggest_lesion_id: continue
+                instance_mask[components == cid] = 0
 
         elif np.sum(mask) < l_min:  # check if lesion size is too small or not
             instance_mask[mask] = 0
@@ -284,6 +294,9 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
         voting_image = None
 
     instance_mask = np.squeeze(instance_ids.cpu().numpy().astype(np.int32)) * semantic_mask
+    
+    
+    instance_mask = refine_instance_segmentation(instance_mask)
 
     ret = (instance_mask, centers_mx.astype(np.uint8))
     ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()
