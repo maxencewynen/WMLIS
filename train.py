@@ -62,6 +62,7 @@ parser.add_argument('--cache_rate', default=1.0, type=float)
 # logging
 parser.add_argument('--val_interval', type=int, default=5, help='Validation every n-th epochs')
 parser.add_argument('--threshold', type=float, default=0.5, help='Probability threshold')
+parser.add_argument('--minimum_lesion_size', type=int, default=14, help='Minimum lesion size in mm^3')
 
 parser.add_argument('--wandb_project', type=str, default='WMLIS', help='wandb project name')
 parser.add_argument('--name', default="idiot without a name", help='Wandb run name')
@@ -397,6 +398,9 @@ def main(args):
                             val_data["brain_mask"].squeeze().cpu().numpy()
                         )
 
+                        meta_dict = args.I[0] + "_meta_dict"
+                        voxel_size = val_data[meta_dict]['pixdim'][0][1:4]
+
                         val_semantic_pred, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 
                         val_semantic_pred = act(val_semantic_pred).cpu().numpy()
@@ -412,7 +416,8 @@ def main(args):
                         sem_pred, inst_pred, _, votes = postprocess(val_semantic_pred,
                                                                     val_center_pred,
                                                                     val_offsets_pred,
-                                                                    compute_voting=True)
+                                                                    compute_voting=True,
+                                                                    voxel_size=voxel_size,)
                         votes *= val_bms
 
                         matched_pairs, unmatched_pred, unmatched_ref = match_instances(inst_pred,

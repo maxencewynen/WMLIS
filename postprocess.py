@@ -5,17 +5,107 @@ import torch
 import torch.nn.functional as F
 
 
-def postprocess_binary_segmentation(binary_segmentation, threshold=0.5, min_lesion_size=9):
+def postprocess_probability_segmentation(probability_segmentation, threshold=0.5, voxel_size=(1,1,1), l_min=14):
+    """
+    Constructs an instance segmentation mask from a lesion probability matrix, by applying a threshold
+     and removing all lesions with less volume than `l_min`.
+    Args:
+        probability_segmentation: `numpy.ndarray` of shape [H, W, D], with a binary lesions segmentation mask.
+        threshold: `float`, threshold to apply to the binary segmentation mask.
+        voxel_size: `tuple` of length 3, with the voxel size in mm.
+        l_min:  `int`, minimal volume of a lesion.
+    Returns:
+        Instance lesion segmentation mask (`numpy.ndarray` of shape [H, W, D])
+    """
     # Threshold the image
-    binary_data = np.where(binary_segmentation >= threshold, 1, 0).astype(np.uint8)
+    binary_data = np.where(probability_segmentation >= threshold, 1, 0).astype(np.uint8)
 
-    # Remove objects smaller than 9 voxels
-    binary_data = remove_connected_components(binary_data, l_min=min_lesion_size)
+    # Remove objects smaller than l_min voxels
+    binary_data = remove_small_lesions_from_binary_segmentation(binary_data, voxel_size=voxel_size, l_min=l_min)
 
-    # Find connected components larger than 9 voxels
+    # Find connected components larger than l_min voxels
     labeled_array, num_features = label(binary_data)
 
     return labeled_array
+
+
+def remove_small_lesions_from_instance_segmentation(instance_segmentation, voxel_size, l_min=14):
+    """
+    Remove all lesions with less volume than `l_min` from an instance segmentation mask `instance_segmentation`.
+    Args:
+        instance_segmentation: `numpy.ndarray` of shape [H, W, D], with a binary lesions segmentation mask.
+        voxel_size: `tuple` of length 3, with the voxel size in mm.
+        l_min:  `int`, minimal volume of a lesion.
+    Returns:
+        Instance lesion segmentation mask (`numpy.ndarray` of shape [H, W, D])
+    """
+
+    assert type(voxel_size) == tuple, "Voxel size should be a tuple"
+    assert len(voxel_size) == 3, "Voxel size should be a tuple of length 3"
+
+    label_list, label_counts = np.unique(instance_segmentation, return_counts=True)
+
+    instance_seg2 = np.zeros_like(instance_segmentation)
+
+    for lid, lvoxels in zip(label_list, label_counts):
+        if lid == 0: continue
+
+        this_instance_indices = np.where(instance_segmentation == lid)
+        size_along_x = (max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
+        size_along_y = (max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
+        size_along_z = (max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
+
+        # if the connected component is smaller than 3 voxels in any direction, skip it as it is not
+        # clinically considered a lesion
+        if size_along_x < 3 or size_along_y < 3 or size_along_z < 3:
+            continue
+
+        if lvoxels * np.prod(voxel_size) > l_min:
+            instance_seg2[instance_segmentation == lid] = lid
+
+    return instance_seg2
+
+
+def remove_small_lesions_from_binary_segmentation(binary_segmentation, voxel_size, l_min=14):
+    """
+    Remove all lesions with less volume than `l_min` from a binary segmentation mask `binary_segmentation`.
+    Args:
+        binary_segmentation: `numpy.ndarray` of shape [H, W, D], with a binary lesions segmentation mask.
+        voxel_size: `tuple` of length 3, with the voxel size in mm.
+        l_min:  `int`, minimal volume of a lesion.
+    Returns:
+        Binary lesion segmentation mask (`numpy.ndarray` of shape [H, W, D])
+    """
+
+    assert type(voxel_size) == tuple, "Voxel size should be a tuple"
+    assert len(voxel_size) == 3, "Voxel size should be a tuple of length 3"
+    assert np.unique(binary_segmentation).tolist() == [0, 1], "Segmentation should be binary"
+
+    labeled_seg, num_labels = label(binary_segmentation)
+    label_list = np.unique(labeled_seg)
+    num_elements_by_lesion = labeled_comprehension(binary_segmentation, labeled_seg, label_list, np.sum, float, 0)
+
+    seg2 = np.zeros_like(binary_segmentation)
+    for i_el, n_el in enumerate(num_elements_by_lesion):
+        this_instance_indices = np.where(labeled_seg == i_el)
+        this_instance_mask = np.stack(this_instance_indices, axis=1)
+
+        size_along_x = (max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
+        size_along_y = (max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
+        size_along_z = (max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
+
+        # if the connected component is smaller than 3 voxels in any direction, skip it as it is not
+        # clinically considered a lesion
+        if size_along_x < 3 or size_along_y < 3 or size_along_z < 3:
+            continue
+
+        lesion_size = n_el * np.prod(voxel_size)
+        if lesion_size > l_min:
+            current_voxels = this_instance_mask,
+            seg2[current_voxels[:, 0],
+            current_voxels[:, 1],
+            current_voxels[:, 2]] = 1
+    return seg2
 
 
 def remove_connected_components(segmentation, l_min=9):
@@ -260,15 +350,18 @@ def calibrate_offsets(offsets, centers):
     return offsets
 
 
-def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1):
+def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1,
+                voxel_size=(1, 1, 1), l_min=14):
     """
     Postprocesses the semantic mask, center heatmap and the offsets.
     Arguments:
         semantic_mask: a binary numpy.ndarray of shape [W, H, D].
         heatmap: A Tensor of shape [N, 1, W, H, D] of raw center heatmap output
         offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output
-        threshold: A Float, threshold applied to the semantic mask if to be applied.
         compute_voting: A Boolean, whether to compute the votes image.
+        heatmap_threshold: A Float, threshold applied to the center heatmap score.
+        voxel_size: A tuple of length 3, with the voxel size in mm.
+        l_min:  An Integer, minimal volume of a lesion.
     Returns:
         A tuple of:
             semantic_mask: A binary numpy.ndarray of shape [W, H, D].
@@ -277,7 +370,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
             (Optional: voting_image: A numpy.ndarray of shape [W, H, D].)
     """
     assert len(np.unique(semantic_mask)) <= 2, "Semantic mask should be binary"
-    semantic_mask = remove_connected_components(semantic_mask)
+    semantic_mask = remove_small_lesions_from_binary_segmentation(semantic_mask, voxel_size=voxel_size, l_min=l_min)
 
     instance_centers = find_instance_center(heatmap, threshold=heatmap_threshold)
 
@@ -294,8 +387,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
         voting_image = None
 
     instance_mask = np.squeeze(instance_ids.cpu().numpy().astype(np.int32)) * semantic_mask
-    
-    
+    instance_mask = remove_small_lesions_from_instance_segmentation(instance_mask, voxel_size=voxel_size, l_min=l_min)
     instance_mask = refine_instance_segmentation(instance_mask)
 
     ret = (instance_mask, centers_mx.astype(np.uint8))

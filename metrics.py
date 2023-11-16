@@ -14,6 +14,7 @@ import numpy as np
 import nibabel as nib
 from scipy.ndimage import label
 from multiprocessing import Pool
+from postprocess import remove_small_lesions_from_instance_segmentation
 
 
 def dice_metric_multiclass(ground_truth, predictions):
@@ -385,7 +386,9 @@ def compute_metrics(args):
                 print(f"No prediction found for {pred_file}")
                 continue
 
-            ref_img = nib.load(os.path.join(ref_dir, ref_file)).get_fdata()
+            ref_img = nib.load(os.path.join(ref_dir, ref_file))
+            voxel_size = ref_img.header.get_zooms()
+            ref_img = remove_small_lesions_from_instance_segmentation(ref_img.get_fdata(), voxel_size, l_min=14)
             pred_img = nib.load(pred_file_path).get_fdata()
 
             matched_pairs, unmatched_pred, unmatched_ref = match_instances(pred_img, ref_img)

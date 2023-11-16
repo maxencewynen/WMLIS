@@ -23,6 +23,7 @@ from monai.config import KeysCollection
 from copy import deepcopy
 import nibabel as nib
 import torch.nn.functional as F
+from postprocess import remove_small_lesions_from_instance_segmentation
 
 DISCARDED_SUBJECTS = []
 QUANTITATIVE_SEQUENCES = ["T1map"]
@@ -112,7 +113,7 @@ class LesionOffsetTransformd(MapTransform):
     A MONAI transform to compute the offsets for each voxel from the center of mass of its lesion.
     """
 
-    def __init__(self, keys: KeysCollection, allow_missing_keys=False):
+    def __init__(self, keys: KeysCollection, allow_missing_keys=False, remove_small_lesions=False, l_min=14):
         """
         Args:
             key (str): the key corresponding to the desired data in the dictionary to apply the transformation.
@@ -120,22 +121,27 @@ class LesionOffsetTransformd(MapTransform):
         super().__init__(keys, allow_missing_keys=allow_missing_keys)
         if type(keys) == list and len(keys) > 1:
             raise Exception("This transform should only be used with 1 key.")
+        self.remove_small_lesions = remove_small_lesions
+        self.l_min = l_min
 
     def __call__(self, data):
         d = dict(data)
+        voxel_size = data[[k for k in list(data.keys()) if "_meta_dict" in k][0]]['pixdim'][0][1:4]
         for key in self.key_iterator(d):
-            com_gt, com_reg = self.make_offset_matrices(d[key])
+            com_gt, com_reg = self.make_offset_matrices(d[key], voxel_size=voxel_size)
             d["center_heatmap"] = com_gt
             d["offsets"] = com_reg
             d["label"] = (d[key] > 0).astype(np.uint8)
         return d
 
-    def make_offset_matrices(self, data, sigma=2):
+    def make_offset_matrices(self, data, sigma=2, voxel_size=(1, 1, 1)):
         # Define 3D Gaussian function
         def gaussian_3d(x, y, z, cx, cy, cz, sigma):
             return np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (2 * sigma ** 2))
 
         data = np.squeeze(data)
+        if self.remove_small_lesions:
+            data = remove_small_lesions_from_instance_segmentation(data, voxel_size=voxel_size, l_min=self.l_min)
 
         heatmap = np.zeros_like(data, dtype=np.float32)
         offset_x = np.zeros_like(data, dtype=np.float32)
@@ -255,7 +261,7 @@ def get_val_transforms(I=['FLAIR'], bm=False, apply_mask=None):
     transforms += [
         Lambdad(keys=["brain_mask"], func=lambda x: x.astype(np.uint8)),
         NormalizeIntensityd(keys=non_quantitative_images, nonzero=True),
-        LesionOffsetTransformd(keys="instance_mask"),
+        LesionOffsetTransformd(keys="instance_mask", remove_small_lesions=True),
         ToTensord(keys=I + other_keys + ["label", "center_heatmap", "offsets"]),
         ConcatItemsd(keys=I, name="image", dim=0)
     ]
@@ -451,31 +457,6 @@ def get_val_dataloader(data_dir, num_workers, cache_rate=0.1, I=['FLAIR'], test=
 
     ds = CacheDataset(data=files, transform=val_transforms, cache_rate=cache_rate, num_workers=num_workers)
     return DataLoader(ds, batch_size=1, shuffle=True, num_workers=num_workers)
-
-
-def remove_connected_components(segmentation, l_min=9):
-    """
-    Remove all lesions with less or equal amount of voxels than `l_min` from a
-    binary segmentation mask `segmentation`.
-    Args:
-      segmentation: `numpy.ndarray` of shape [H, W, D], with a binary lesions segmentation mask.
-      l_min:  `int`, minimal amount of voxels in a lesion.
-    Returns:
-      Binary lesion segmentation mask (`numpy.ndarray` of shape [H, W, D])
-      only with connected components that have more than `l_min` voxels.
-    """
-    labeled_seg, num_labels = ndimage.label(segmentation)
-    label_list = np.unique(labeled_seg)
-    num_elements_by_lesion = ndimage.labeled_comprehension(segmentation, labeled_seg, label_list, np.sum, float, 0)
-
-    seg2 = np.zeros_like(segmentation)
-    for i_el, n_el in enumerate(num_elements_by_lesion):
-        if n_el > l_min:
-            current_voxels = np.stack(np.where(labeled_seg == i_el), axis=1)
-            seg2[current_voxels[:, 0],
-            current_voxels[:, 1],
-            current_voxels[:, 2]] = 1
-    return seg2
 
 
 if __name__ == "__main__":

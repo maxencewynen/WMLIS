@@ -8,7 +8,7 @@ from model import *
 from monai.data import write_nifti
 import numpy as np
 from data_load import get_val_dataloader
-from postprocess import postprocess, postprocess_binary_segmentation, remove_connected_components
+from postprocess import *
 from metrics import dice_metric, dice_norm_metric
 import nibabel as nib
 from tqdm import tqdm
@@ -46,6 +46,7 @@ parser.add_argument('--separate_decoders', action="store_true", default=False,
                     help="Whether the model has separate decoders or not")
 parser.add_argument('--offsets_scale', type=int, default=1, help="Scale to multiply the offsets with")
 parser.add_argument('--heatmap_threshold', type=float, default=0.1, help="Threshold to discard small centers in the predicted heatmap")
+parser.add_argument('--minimum_lesion_size', type=int, default=14, help="Minimum lesion size in mm3")
 
 
 
@@ -123,6 +124,7 @@ def main(args):
             meta_dict = args.sequences[0] + "_meta_dict"
             original_affine = batch_data[meta_dict]['original_affine'][0]
             affine = batch_data[meta_dict]['affine'][0]
+            voxel_size = batch_data[meta_dict]['pixdim'][0][1:4]
             spatial_shape = batch_data[meta_dict]['spatial_shape'][0]
             filename_or_obj = batch_data[meta_dict]['filename_or_obj'][0]
             filename_or_obj = os.path.basename(filename_or_obj)
@@ -143,12 +145,17 @@ def main(args):
             if args.compute_voting:
                 seg, instances_pred, instance_centers, voting_image = postprocess(seg, heatmap_pred, offsets_pred,
                                                                                   compute_voting=args.compute_voting, 
-                                                                                  heatmap_threshold=args.heatmap_threshold)
+                                                                                  heatmap_threshold=args.heatmap_threshold,
+                                                                                  voxel_size=voxel_size,
+                                                                                  l_min=args.minimum_lesion_size)
             elif not args.semantic_model:
-                seg, instances_pred, instance_centers = postprocess(seg, heatmap_pred, offsets_pred, heatmap_threshold=args.heatmap_threshold)
+                seg, instances_pred, instance_centers = postprocess(seg, heatmap_pred, offsets_pred,
+                                                                    heatmap_threshold=args.heatmap_threshold,
+                                                                    voxel_size=voxel_size,
+                                                                    l_min=args.minimum_lesion_size)
             else:
-                seg = remove_connected_components(seg)
-                instances_pred = postprocess_binary_segmentation(seg)
+                seg = remove_small_lesions_from_binary_segmentation(seg, voxel_size=voxel_size, l_min=args.minimum_lesion_size)
+                instances_pred = postprocess_probability_segmentation(seg, voxel_size=voxel_size, l_min=args.minimum_lesion_size)
             
             filename = filename_or_obj[:14] + "_seg-binary.nii.gz"
             filepath = os.path.join(path_pred, filename)
