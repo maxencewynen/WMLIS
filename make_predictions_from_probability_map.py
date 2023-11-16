@@ -42,7 +42,8 @@ def process_files(directory, threshold, l_min):
 
 if __name__ == "__main__":
     # Initialize ArgumentParser
-    parser = argparse.ArgumentParser(description='Process lesion probability maps.')
+    parser = argparse.ArgumentParser(description='Process lesion probability maps.', 
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     # Add arguments
     parser.add_argument('--pred_path', type=str, help='Path to directory including lesion probability map nifti files')

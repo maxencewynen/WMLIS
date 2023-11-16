@@ -399,7 +399,7 @@ def main(args):
                         )
 
                         meta_dict = args.I[0] + "_meta_dict"
-                        voxel_size = val_data[meta_dict]['pixdim'][0][1:4]
+                        voxel_size = tuple(val_data[meta_dict]['pixdim'][0][1:4])
 
                         val_semantic_pred, val_center_pred, val_offsets_pred = inference(val_inputs, model)
 

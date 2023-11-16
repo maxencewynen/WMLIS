@@ -126,7 +126,7 @@ class LesionOffsetTransformd(MapTransform):
 
     def __call__(self, data):
         d = dict(data)
-        voxel_size = data[[k for k in list(data.keys()) if "_meta_dict" in k][0]]['pixdim'][0][1:4]
+        voxel_size = tuple(data[[k for k in list(data.keys()) if "_meta_dict" in k][0]]['pixdim'][1:4])
         for key in self.key_iterator(d):
             com_gt, com_reg = self.make_offset_matrices(d[key], voxel_size=voxel_size)
             d["center_heatmap"] = com_gt

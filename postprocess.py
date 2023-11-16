@@ -51,9 +51,9 @@ def remove_small_lesions_from_instance_segmentation(instance_segmentation, voxel
         if lid == 0: continue
 
         this_instance_indices = np.where(instance_segmentation == lid)
-        size_along_x = (max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
-        size_along_y = (max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
-        size_along_z = (max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
+        size_along_x = (1 + max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
+        size_along_y = (1 + max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
+        size_along_z = (1 + max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
 
         # if the connected component is smaller than 3 voxels in any direction, skip it as it is not
         # clinically considered a lesion
@@ -90,9 +90,9 @@ def remove_small_lesions_from_binary_segmentation(binary_segmentation, voxel_siz
         this_instance_indices = np.where(labeled_seg == i_el)
         this_instance_mask = np.stack(this_instance_indices, axis=1)
 
-        size_along_x = (max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
-        size_along_y = (max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
-        size_along_z = (max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
+        size_along_x = (1 + max(this_instance_indices[0]) - min(this_instance_indices[0])) * voxel_size[0]
+        size_along_y = (1 + max(this_instance_indices[1]) - min(this_instance_indices[1])) * voxel_size[1]
+        size_along_z = (1 + max(this_instance_indices[2]) - min(this_instance_indices[2])) * voxel_size[2]
 
         # if the connected component is smaller than 3 voxels in any direction, skip it as it is not
         # clinically considered a lesion
@@ -101,7 +101,7 @@ def remove_small_lesions_from_binary_segmentation(binary_segmentation, voxel_siz
 
         lesion_size = n_el * np.prod(voxel_size)
         if lesion_size > l_min:
-            current_voxels = this_instance_mask,
+            current_voxels = this_instance_mask
             seg2[current_voxels[:, 0],
             current_voxels[:, 1],
             current_voxels[:, 2]] = 1

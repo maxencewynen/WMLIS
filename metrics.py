@@ -373,7 +373,7 @@ def compute_metrics(args):
     dd = "test" if args.test else "val"
     ref_dir = os.path.join(args.ref_path, dd, "labels")
     
-    for ref_file in os.listdir(ref_dir):
+    for ref_file in sorted(os.listdir(ref_dir)):
         if ref_file.endswith("mask-instances.nii.gz"):
             print(ref_file)
             subj_id = ref_file.split("_ses")[0].split("sub-")[-1]  # Extracting subject ID

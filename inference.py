@@ -124,7 +124,7 @@ def main(args):
             meta_dict = args.sequences[0] + "_meta_dict"
             original_affine = batch_data[meta_dict]['original_affine'][0]
             affine = batch_data[meta_dict]['affine'][0]
-            voxel_size = batch_data[meta_dict]['pixdim'][0][1:4]
+            voxel_size = tuple(batch_data[meta_dict]['pixdim'][0][1:4])
             spatial_shape = batch_data[meta_dict]['spatial_shape'][0]
             filename_or_obj = batch_data[meta_dict]['filename_or_obj'][0]
             filename_or_obj = os.path.basename(filename_or_obj)
