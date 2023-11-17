@@ -3,6 +3,7 @@ from scipy.ndimage import maximum_filter, generate_binary_structure, label, labe
 import argparse
 import torch
 import torch.nn.functional as F
+from dworkin_nn import compute_hessian_eigenvalues
 
 
 def postprocess_probability_segmentation(probability_segmentation, threshold=0.5, voxel_size=(1,1,1), l_min=14):
@@ -194,6 +195,40 @@ def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=100):
         return torch.nonzero(ctr_hmp > top_k_scores[-1]).short()
 
 
+def find_instance_centers_dworkin(probability_map, semantic_mask, device='cpu'):
+    """
+    Computes the lesion centers using dworkin's method
+    Arguments:
+        probability_map: A numpy.ndarray of shape [W, H, D] of raw probability map output
+        semantic_mask: A numpy.ndarray of shape [W, H, D] of raw semantic mask output
+    Returns:
+        A Tensor of shape [K, 3] where K is the number of center points. The order of second dim is (x, y, z).
+    """
+    if type(probability_map) == torch.Tensor:
+        probability_map = probability_map.cpu().numpy()
+
+    assert type(probability_map) == np.ndarray, "Probability map should be a numpy array"
+
+    mask = semantic_mask == 1
+    masked_image_data = np.where(mask, probability_map, 0)
+
+    eigenvalues = compute_hessian_eigenvalues(masked_image_data)
+    lesion_centers_mask = np.all(eigenvalues < 0, axis=0)
+
+    lesion_clusters, n_clusters = label(lesion_centers_mask)
+
+    centers = []
+    for c in range(1, n_clusters + 1):
+        coords = np.where(lesion_clusters == c)
+        coords = np.stack(coords, axis=1)
+        coords = np.round(np.mean(coords, axis=0)).astype(np.int16)
+        centers.append(coords)
+
+    centers = torch.from_numpy(np.stack(centers, axis=0)).short().to(device)
+
+    return centers
+
+
 def make_votes_readable(votes):
     votes = torch.log(votes + 1, out=torch.zeros_like(votes, dtype=torch.float32))
     votes = F.avg_pool3d(votes, kernel_size=3, stride=1, padding=1)
@@ -340,10 +375,11 @@ def calibrate_offsets(offsets, centers):
 
 
 def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_threshold=0.1,
-                voxel_size=(1, 1, 1), l_min=14):
+                voxel_size=(1, 1, 1), l_min=14, probability_map=None):
     """
     Postprocesses the semantic mask, center heatmap and the offsets.
     Arguments:
+        probability_map: A numpy.ndarray of shape [W, H, D] of raw probability map output
         semantic_mask: a binary numpy.ndarray of shape [W, H, D].
         heatmap: A Tensor of shape [N, 1, W, H, D] of raw center heatmap output
         offsets: A Tensor of shape [N, 3, W, H, D] of raw offset output
@@ -361,7 +397,10 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
     assert len(np.unique(semantic_mask)) <= 2, "Semantic mask should be binary"
     semantic_mask = remove_small_lesions_from_binary_segmentation(semantic_mask, voxel_size=voxel_size, l_min=l_min)
 
-    instance_centers = find_instance_center(heatmap, threshold=heatmap_threshold)
+    if probability_map is not None:
+        instance_centers, centers_mx = find_instance_centers_dworkin(probability_map, semantic_mask, device=offsets.device)
+    else:
+        instance_centers = find_instance_center(heatmap, threshold=heatmap_threshold)
 
     centers_mx = np.zeros_like(semantic_mask)
     ic = instance_centers.cpu().numpy()
@@ -387,13 +426,69 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Get all command line arguments.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--compute_voting', action="store_true", default=False,
-                        help="Whether to compute the voting image")
     parser.add_argument('--path_pred', help="Path to the predictions")
+    parser.add_argument('--dworkin', help="Use dworkin to find instance centers", action="store_true", default=False)
+    parser.add_argument('--minimum_lesion_size', help="Minimum lesion size", type=int, default=14)
+    parser.add_argument('--compute_voting', help="Compute the voting image", action="store_true", default=False)
 
     args = parser.parse_args()
 
-    if args.compute_voting:
-        compute_all_voting_image(path_pred=args.path_pred)
-    else:
-        print("Nothing asked, nothing done.")
+    import nibabel as nib
+    import os
+    from monai.data import write_nifti
+
+    # Load the predictions
+    for filename in sorted(os.listdir(args.path_pred)):
+        if not filename.endswith('seg-binary.nii.gz'):
+            continue
+        file = os.path.join(args.path_pred, filename)
+        binary_seg = nib.load()
+        voxel_size = binary_seg.header.get_zooms()
+        affine = binary_seg.affine
+        binary_seg = binary_seg.get_fdata()
+
+        offsets = nib.load(file.replace('seg-binary', 'pred-offsets')).get_fdata()
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        if offsets.shape[-1] == 3:
+            offsets = np.transpose(offsets, (3,0,1,2))
+        offsets = torch.from_numpy(offsets).unsqueeze(0).to(device)
+
+        probability_map = nib.load(file.replace('seg-binary', 'pred_prob')).get_fdata() if args.dworkin else None
+        heatmap = torch.from_numpy(nib.load(file.replace('seg-binary', 'pred-heatmap')).get_fdata()).to(device) if not args.dworkin else None
+
+        ret = postprocess(binary_seg, heatmap, offsets, compute_voting=args.compute_voting, heatmap_threshold=0.1,
+                          voxel_size=voxel_size, l_min=args.l_min, probability_map=probability_map)
+
+        spatial_shape = seg.shape
+
+        if args.compute_voting:
+            seg, instances_pred, instance_centers, voting_image = ret
+            filename = filename[:14] + "_voting-image.nii.gz"
+            filepath = os.path.join(args.path_pred, filename)
+            write_nifti(voting_image * seg, filepath,
+                        affine=affine,
+                        target_affine=affine,
+                        output_spatial_shape=spatial_shape)
+        else:
+            seg, instances_pred, instance_centers = ret
+
+
+        # obtain and save predicted offsets
+        filename = filename[:14] + "_pred-centers.nii.gz"
+        filepath = os.path.join(args.path_pred, filename)
+        write_nifti(instance_centers, filepath,
+                    affine=affine,
+                    target_affine=affine,
+                    output_spatial_shape=spatial_shape)
+
+        # obtain and save predicted offsets
+        filename = filename[:14] + "_pred-instances.nii.gz"
+        filepath = os.path.join(args.path_pred, filename)
+        write_nifti(instances_pred, filepath,
+                    affine=affine,
+                    target_affine=affine,
+                    output_spatial_shape=spatial_shape)
+
+
