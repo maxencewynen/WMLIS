@@ -213,7 +213,8 @@ def main(args):
                                                filename_or_obj[:14] + "_mask-classes.nii.gz")).get_fdata()
                 else:
                     gt = np.squeeze(batch_data["label"].cpu().numpy())
-
+                
+                gt = (gt > 0).astype(np.uint8)
                 dsc = dice_metric(gt, seg)
                 ndsc = dice_norm_metric(gt, seg)
                 print(filename_or_obj[:14], "DSC:", round(dsc, 3), " /  nDSC:", round(ndsc, 3))

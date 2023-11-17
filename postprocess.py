@@ -133,7 +133,7 @@ def remove_connected_components(segmentation, l_min=9):
     return seg2
 
 
-def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=None):
+def find_instance_center(ctr_hmp, threshold=0.1, nms_kernel=3, top_k=100):
     """
     from https://github.com/bowenc0221/panoptic-deeplab/blob/master/segmentation/model/post_processing/instance_post_processing.py
     Find the center points from the center heatmap.
@@ -261,47 +261,36 @@ def group_pixels(ctr, offsets, compute_voting=False):
     # ctr_loc = [D*H*W, 3] -> [1, D*H*W, 3]
     ctr = ctr.unsqueeze(1)
     ctr_loc = ctr_loc.unsqueeze(0)
+    
+    # Compute the distances in batches to avoid memory issues
+    total_elements = ctr_loc.shape[1]  
+    batch_size = 1e6
+    num_batches = (total_elements + batch_size - 1) // batch_size
 
-    # Compute the memory needed to store the distance matrix
-    memory_needed = (ctr.shape[0] * ctr_loc.shape[1] * ctr_loc.element_size())
-    free, total = torch.cuda.mem_get_info()
-    if memory_needed < free - 0.5e9:
-        # Compute the Euclidean distance in 3D space
-        distance = torch.norm(ctr - ctr_loc, dim=-1)  # [K, D*H*W]
+    # Initialize a list to store the results for each batch
+    instance_id_batches = []
 
-        # Find the center with the minimum distance at each voxel, offset by 1, to reserve id=0 for stuff
-        instance_id = torch.argmin(distance, dim=0).short().view(1, depth, height, width) + 1  # [1, D, H, W]
-        del distance, ctr_loc, ctr
-        torch.cuda.empty_cache()
-    else:
-        total_elements = ctr_loc.shape[1]  # Assuming dim=1 is the element dimension
-        batch_size = 1e6
-        num_batches = (total_elements + batch_size - 1) // batch_size
+    for batch_idx in range(int(num_batches)):
+        start_idx = int(batch_idx * batch_size)
+        end_idx = int(min((batch_idx + 1) * batch_size, total_elements))
 
-        # Initialize a list to store the results for each batch
-        instance_id_batches = []
+        # Process a batch of elements
+        ctr_loc_batch = ctr_loc[:, start_idx:end_idx]  # Slice along dim=1
+        distance_batch = torch.norm(ctr - ctr_loc_batch, dim=-1)  # [K, batch_size]
 
-        for batch_idx in range(int(num_batches)):
-            start_idx = int(batch_idx * batch_size)
-            end_idx = int(min((batch_idx + 1) * batch_size, total_elements))
+        # Find the center with the minimum distance at each voxel, offset by 1
+        instance_id_batch = torch.argmin(distance_batch, dim=0).short() + 1
+        instance_id_batches.append(instance_id_batch)
 
-            # Process a batch of elements
-            ctr_loc_batch = ctr_loc[:, start_idx:end_idx]  # Slice along dim=1
-            distance_batch = torch.norm(ctr - ctr_loc_batch, dim=-1)  # [K, batch_size]
-
-            # Find the center with the minimum distance at each voxel, offset by 1
-            instance_id_batch = torch.argmin(distance_batch, dim=0).short() + 1
-            instance_id_batches.append(instance_id_batch)
-
-        # Concatenate the results along the batch dimension
-        instance_id = torch.cat(instance_id_batches, dim=0).view(1, depth, height, width)
+    # Concatenate the results along the batch dimension
+    instance_id = torch.cat(instance_id_batches, dim=0).view(1, depth, height, width)
 
     if compute_voting:
         return instance_id, torch.squeeze(votes)
     return instance_id
 
 
-def refine_instance_segmentation(instance_mask, l_min=9):
+def refine_instance_segmentation(instance_mask, l_min=14):
     """
     Refines the instance segmentation by relabeling disconnected components in instances
     and removing instances smaller than l_min
@@ -388,7 +377,7 @@ def postprocess(semantic_mask, heatmap, offsets, compute_voting=False, heatmap_t
 
     instance_mask = np.squeeze(instance_ids.cpu().numpy().astype(np.int32)) * semantic_mask
     instance_mask = remove_small_lesions_from_instance_segmentation(instance_mask, voxel_size=voxel_size, l_min=l_min)
-    instance_mask = refine_instance_segmentation(instance_mask)
+    instance_mask = refine_instance_segmentation(instance_mask, l_min=l_min)
 
     ret = (instance_mask, centers_mx.astype(np.uint8))
     ret += (voting_image.cpu().numpy().astype(np.int16),) if compute_voting else ()

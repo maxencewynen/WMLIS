@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+import re
 
 # Base directory
 base_dir = r'/dir/scratchL/mwynen/data/cusl_wml/predictions'
@@ -15,8 +16,16 @@ def summarize_metrics(base_dir, test=False):
 
     # Loop through each model to compute mean metrics
     for model in models:
-        file_path = os.path.join(base_dir, model, f"metrics_{model}_{suffix}.csv")
-        
+        pattern = r"^metrics_.*\.csv"
+        matching_files = []
+        matching_files = [filename for filename in os.listdir(os.path.join(base_dir, model)) if re.match(pattern, filename)]
+        if len(matching_files) == 0:
+            print(f"Warning: {file_path} does not exist!")
+            continue
+
+        filename = matching_files[0]
+        file_path = os.path.join(base_dir, model, filename)
+         
         if os.path.exists(file_path):
             df = pd.read_csv(file_path)
             if 'CLR' in list(df.columns):
@@ -38,8 +47,8 @@ def summarize_metrics(base_dir, test=False):
 
             # Store the result in the dictionary
             model_mean_metrics[model] = mean_values
-        else:
-            print(f"Warning: {file_path} does not exist!")
+        elif len(matching_files) == 0:
+            print(f"Warning: {model} has multiple metrics files! ({matching_files}) Considered only {filename}")
 
     # Convert the dictionary to a DataFrame and write it to CSV
     mean_df = pd.DataFrame.from_dict(model_mean_metrics, orient='index').round(3).sort_index()
